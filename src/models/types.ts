@@ -10,12 +10,18 @@ export interface CompletionRequest {
   system: string;
   messages: ChatTurn[];
   tier: ModelTier;
+  /**
+   * A JSON Schema the reply must match. When set, the result's `structured` holds the parsed
+   * object. Use strict schemas: every property required, additionalProperties false.
+   */
+  jsonSchema?: Record<string, unknown>;
 }
 
 export interface CompletionResult {
   text: string;
   model: string;
   costUsd?: number;
+  structured?: unknown;
 }
 
 /**

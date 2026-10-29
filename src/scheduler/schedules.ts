@@ -28,4 +28,6 @@ export async function applySchedules(
 
 export const defaultSchedules = (dailyBriefCron: string | undefined): ScheduleSpec[] => [
   { job: Jobs.dailyBrief, cron: dailyBriefCron },
+  // Every minute is cheap (one indexed query) and keeps reminders on time.
+  { job: Jobs.taskReminders, cron: "* * * * *" },
 ];

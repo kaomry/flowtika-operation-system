@@ -33,6 +33,18 @@ export function approvalCardText(a: Approval): string {
 /** Callback data stays under Telegram's 64-byte limit: "ap:" + uuid (36) + ":" + one letter. */
 export const approvalCallback = (id: string, decision: "a" | "r") => `ap:${id}:${decision}`;
 
+export type TaskButton = "done" | "hour" | "tomorrow";
+const TASK_BUTTON_CODES: Record<TaskButton, string> = { done: "d", hour: "h", tomorrow: "t" };
+
+export const taskCallback = (id: number, button: TaskButton) => `tk:${id}:${TASK_BUTTON_CODES[button]}`;
+
+export function parseTaskCallback(data: string): { id: number; button: TaskButton } | null {
+  const match = /^tk:(\d+):([dht])$/.exec(data);
+  if (!match) return null;
+  const button = (Object.keys(TASK_BUTTON_CODES) as TaskButton[]).find((b) => TASK_BUTTON_CODES[b] === match[2])!;
+  return { id: Number(match[1]), button };
+}
+
 export function parseApprovalCallback(data: string): { id: string; decision: "approved" | "rejected" } | null {
   const match = /^ap:([0-9a-f-]{36}):([ar])$/.exec(data);
   if (!match) return null;

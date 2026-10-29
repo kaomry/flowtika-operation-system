@@ -60,9 +60,14 @@ interface ClaudeCodeJson {
   is_error?: boolean;
   result?: string;
   total_cost_usd?: number;
+  structured_output?: unknown;
 }
 
-export function parseClaudeCodeOutput(stdout: string): { text: string; costUsd?: number } {
+export function parseClaudeCodeOutput(stdout: string): {
+  text: string;
+  costUsd?: number;
+  structured?: unknown;
+} {
   let parsed: ClaudeCodeJson;
   try {
     parsed = JSON.parse(stdout) as ClaudeCodeJson;
@@ -72,7 +77,11 @@ export function parseClaudeCodeOutput(stdout: string): { text: string; costUsd?:
   if (parsed.is_error || parsed.subtype !== "success" || typeof parsed.result !== "string") {
     throw new Error(`Claude Code reported an error: ${parsed.result ?? parsed.subtype ?? "unknown"}`);
   }
-  return { text: parsed.result.trim(), costUsd: parsed.total_cost_usd };
+  return {
+    text: parsed.result.trim(),
+    costUsd: parsed.total_cost_usd,
+    structured: parsed.structured_output,
+  };
 }
 
 /**
@@ -106,6 +115,7 @@ export class ClaudeCodeBackend implements ModelBackend {
       "--strict-mcp-config",
       "--no-session-persistence",
     ];
+    if (request.jsonSchema) args.push("--json-schema", JSON.stringify(request.jsonSchema));
     const result = await this.run(this.bin, args, renderTranscript(request.messages), {
       cwd: this.workdir,
       timeoutMs: this.timeoutMs,
@@ -113,7 +123,10 @@ export class ClaudeCodeBackend implements ModelBackend {
     if (result.code !== 0 && !result.stdout.trim()) {
       throw new Error(`Claude Code exited with code ${result.code}: ${result.stderr.slice(0, 500)}`);
     }
-    const { text, costUsd } = parseClaudeCodeOutput(result.stdout);
-    return { text, model, costUsd };
+    const { text, costUsd, structured } = parseClaudeCodeOutput(result.stdout);
+    if (request.jsonSchema && structured === undefined) {
+      throw new Error("Claude Code returned no structured output for a request that needed it.");
+    }
+    return { text, model, costUsd, structured };
   }
 }

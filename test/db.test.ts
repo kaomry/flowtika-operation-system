@@ -5,6 +5,7 @@ import { ApprovalService, type Approval, type ApprovalPresenter } from "../src/a
 import { migrate } from "../src/db/migrate.ts";
 import { createPool, type Db } from "../src/db/pool.ts";
 import type { CompletionRequest, ModelBackend } from "../src/models/types.ts";
+import { TaskService } from "../src/tasks/service.ts";
 
 // Runs against a real Postgres with pgvector. Set TEST_DATABASE_URL to a throwaway database.
 const url = process.env.TEST_DATABASE_URL;
@@ -23,7 +24,7 @@ describe.skipIf(!url)("with a database", () => {
   });
 
   beforeEach(async () => {
-    await db.query("truncate messages, approvals, audit_log restart identity");
+    await db.query("truncate messages, approvals, audit_log, tasks restart identity");
   });
 
   it("migrations are idempotent", async () => {
@@ -49,7 +50,7 @@ describe.skipIf(!url)("with a database", () => {
 
     it("remembers the conversation across messages", async () => {
       const backend = new FakeBackend();
-      const runtime = new AgentRuntime(db, backend, { memoryMessages: 10, timezone: "UTC" });
+      const runtime = new AgentRuntime(db, backend, new TaskService(db, "UTC"), { memoryMessages: 10, timezone: "UTC" });
 
       expect(await runtime.reply(agent, 1, "first")).toBe("reply 1");
       await runtime.reply(agent, 1, "second");
@@ -65,7 +66,7 @@ describe.skipIf(!url)("with a database", () => {
 
     it("keeps chats apart and honours the memory limit", async () => {
       const backend = new FakeBackend();
-      const runtime = new AgentRuntime(db, backend, { memoryMessages: 2, timezone: "UTC" });
+      const runtime = new AgentRuntime(db, backend, new TaskService(db, "UTC"), { memoryMessages: 2, timezone: "UTC" });
       await runtime.reply(agent, 1, "a");
       await runtime.reply(agent, 2, "other chat");
       await runtime.reply(agent, 1, "b");
@@ -77,7 +78,7 @@ describe.skipIf(!url)("with a database", () => {
 
     it("stores the output of a scheduled run but not its instruction", async () => {
       const backend = new FakeBackend();
-      const runtime = new AgentRuntime(db, backend, { memoryMessages: 10, timezone: "UTC" });
+      const runtime = new AgentRuntime(db, backend, new TaskService(db, "UTC"), { memoryMessages: 10, timezone: "UTC" });
       await runtime.runInstruction(agent, 1, "[Scheduled] brief");
       const { rows } = await db.query("select role, content from messages");
       expect(rows).toEqual([{ role: "assistant", content: "reply 1" }]);

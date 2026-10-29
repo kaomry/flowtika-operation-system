@@ -8,6 +8,7 @@ import { createModelBackend } from "./models/index.ts";
 import { startQueue } from "./queue/boss.ts";
 import { applySchedules, defaultSchedules } from "./scheduler/schedules.ts";
 import { createBot } from "./telegram/bot.ts";
+import { TaskService } from "./tasks/service.ts";
 import { registerWorkers } from "./worker.ts";
 
 const config = loadConfig();
@@ -18,7 +19,8 @@ if (applied.length) log.info({ applied }, "migrations applied");
 
 const boss = await startQueue(config.DATABASE_URL, log);
 const backend = createModelBackend(config);
-const runtime = new AgentRuntime(db, backend, {
+const tasks = new TaskService(db, config.TIMEZONE);
+const runtime = new AgentRuntime(db, backend, tasks, {
   memoryMessages: config.MEMORY_MESSAGES,
   timezone: config.TIMEZONE,
 });
@@ -30,6 +32,8 @@ const { bot, outbox, presenter } = createBot({
   db,
   boss,
   approvals,
+  tasks,
+  timezone: config.TIMEZONE,
   log,
 });
 approvals.setPresenter(presenter);
@@ -40,7 +44,7 @@ approvals.register("demo.note", async (payload) => {
   return { sent: true };
 });
 
-await registerWorkers({ boss, runtime, approvals, outbox, ownerChatId: config.TELEGRAM_OWNER_ID, log });
+await registerWorkers({ boss, runtime, approvals, tasks, outbox, ownerChatId: config.TELEGRAM_OWNER_ID, log });
 await applySchedules(boss, defaultSchedules(config.DAILY_BRIEF_CRON), config.TIMEZONE, log);
 
 const shutdown = async (signal: string) => {

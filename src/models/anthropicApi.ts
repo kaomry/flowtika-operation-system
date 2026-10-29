@@ -17,6 +17,9 @@ export class AnthropicApiBackend implements ModelBackend {
       max_tokens: 16000,
       system: request.system,
       messages: request.messages,
+      ...(request.jsonSchema
+        ? { output_config: { format: { type: "json_schema" as const, schema: request.jsonSchema } } }
+        : {}),
     });
     if (response.stop_reason === "refusal") {
       throw new Error("The model declined this request.");
@@ -25,6 +28,6 @@ export class AnthropicApiBackend implements ModelBackend {
       .flatMap((block) => (block.type === "text" ? [block.text] : []))
       .join("")
       .trim();
-    return { text, model };
+    return { text, model, structured: request.jsonSchema ? JSON.parse(text) : undefined };
   }
 }

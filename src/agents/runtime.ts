@@ -2,12 +2,14 @@ import { audit } from "../db/audit.ts";
 import { recentMessages, saveMessage } from "../db/messages.ts";
 import type { Db } from "../db/pool.ts";
 import type { ChatTurn, ModelBackend } from "../models/types.ts";
-import type { AgentDefinition } from "./types.ts";
+import type { TaskService } from "../tasks/service.ts";
+import type { AgentContext, AgentDefinition } from "./types.ts";
 
 export class AgentRuntime {
   constructor(
     private readonly db: Db,
     private readonly backend: ModelBackend,
+    private readonly tasks: TaskService,
     private readonly options: { memoryMessages: number; timezone: string },
   ) {}
 
@@ -37,12 +39,14 @@ export class AgentRuntime {
     action: string,
   ): Promise<string> {
     const started = Date.now();
+    const ctx: AgentContext = { now: new Date(), timezone: this.options.timezone, tasks: this.tasks };
     const result = await this.backend.complete({
-      system: agent.systemPrompt({ now: new Date(), timezone: this.options.timezone }),
+      system: await agent.systemPrompt(ctx),
       messages,
       tier: agent.tier,
+      jsonSchema: agent.output?.schema,
     });
-    const text = result.text || "(no reply)";
+    const text = (agent.output ? await agent.output.handle(result.structured, ctx) : result.text) || "(no reply)";
     await saveMessage(this.db, chatId, "assistant", text, agent.name);
     await audit(this.db, agent.name, action, {
       chatId,
