@@ -54,6 +54,7 @@ const done = new Promise<void>((resolve) => {
         resolve();
       },
       taskReminder: async () => undefined,
+      downloadFile: async () => Buffer.alloc(0),
       typing: async () => undefined,
     },
     ownerChatId: CHECK_CHAT_ID,
