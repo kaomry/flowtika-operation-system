@@ -6,6 +6,7 @@ export const Jobs = {
   inboundMessage: "inbound-message",
   approvalExecute: "approval-execute",
   dailyBrief: "schedule-daily-brief",
+  taskReminders: "schedule-task-reminders",
 } as const;
 
 export type JobName = (typeof Jobs)[keyof typeof Jobs];

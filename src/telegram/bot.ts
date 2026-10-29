@@ -6,13 +6,26 @@ import { clearMessages } from "../db/messages.ts";
 import type { Db } from "../db/pool.ts";
 import type { Logger } from "../logger.ts";
 import { Jobs, type ApprovalExecuteJob, type InboundMessageJob } from "../queue/jobs.ts";
+import { describeTask } from "../agents/taskActions.ts";
+import type { Task, TaskService } from "../tasks/service.ts";
+import { formatLocal, parseDueDate } from "../tasks/time.ts";
 import type { Outbox } from "../worker.ts";
-import { approvalCallback, approvalCardText, parseApprovalCallback, splitForTelegram } from "./format.ts";
+import {
+  approvalCallback,
+  approvalCardText,
+  parseApprovalCallback,
+  parseTaskCallback,
+  splitForTelegram,
+  taskCallback,
+} from "./format.ts";
 
-const HELP = `Flowtika OS, Phase 0.
+const HELP = `Flowtika OS
 
-Write to me in Hebrew or English and I'll answer with memory of our conversation.
+Write to me in Hebrew or English. I remember our conversation and keep your task list: "remind me to call Dana tomorrow at 10", "the proposal is waiting on the client", "what's on my plate?"
 
+/tasks  all open tasks
+/today  tasks due today or overdue
+/done 3  mark task #3 done
 /pending  approvals waiting for you
 /reset  forget this conversation
 /demo_approval  try the approval buttons
@@ -24,9 +37,12 @@ export function createBot(deps: {
   db: Db;
   boss: PgBoss;
   approvals: ApprovalService;
+  tasks: TaskService;
+  timezone: string;
   log: Logger;
 }) {
-  const { token, ownerId, db, boss, approvals, log } = deps;
+  const { token, ownerId, db, boss, approvals, tasks, timezone, log } = deps;
+  const taskLines = (list: Task[]) => list.map((t) => `${describeTask(t, timezone)}`).join("\n");
   const bot = new Bot(token);
 
   // Only the owner can use the bot. Anyone else is ignored and logged.
@@ -50,6 +66,23 @@ export function createBot(deps: {
     await ctx.reply(pending.map((a, i) => `${i + 1}. ${a.kind}: ${a.summary}`).join("\n"));
   });
 
+  bot.command("tasks", async (ctx) => {
+    const open = await tasks.listOpen();
+    await ctx.reply(open.length ? `Open tasks:\n${taskLines(open)}` : "No open tasks.");
+  });
+
+  bot.command("today", async (ctx) => {
+    const due = await tasks.dueToday();
+    await ctx.reply(due.length ? `Due today or overdue:\n${taskLines(due)}` : "Nothing is due today.");
+  });
+
+  bot.command("done", async (ctx) => {
+    const id = Number(ctx.match.trim().replace(/^#/, ""));
+    if (!Number.isInteger(id) || id <= 0) return ctx.reply("Which task? For example: /done 3");
+    const task = await tasks.update(id, { status: "done" }, "owner");
+    await ctx.reply(task ? `✓ Done: ${task.title}` : `There is no task #${id}.`);
+  });
+
   bot.command("demo_approval", async (ctx) => {
     await approvals.request({
       kind: "demo.note",
@@ -57,6 +90,27 @@ export function createBot(deps: {
       payload: { text: "The approval gate works." },
       requestedBy: "chief-of-staff",
     });
+  });
+
+  bot.on("callback_query:data", async (ctx, next) => {
+    const parsed = parseTaskCallback(ctx.callbackQuery.data);
+    if (!parsed) return next();
+    let task: Task | null;
+    let note: string;
+    if (parsed.button === "done") {
+      task = await tasks.update(parsed.id, { status: "done" }, "owner");
+      note = "Marked done";
+    } else {
+      const dueAt =
+        parsed.button === "hour"
+          ? new Date(Date.now() + 60 * 60 * 1000)
+          : tomorrowAtNine(timezone);
+      task = await tasks.update(parsed.id, { dueAt }, "owner");
+      note = `Snoozed to ${formatLocal(dueAt, timezone)}`;
+    }
+    if (!task) return ctx.answerCallbackQuery({ text: "That task no longer exists." });
+    await ctx.editMessageText(`⏰ ${task.title}\n\n${note}`).catch(() => undefined);
+    await ctx.answerCallbackQuery({ text: note });
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -81,6 +135,16 @@ export function createBot(deps: {
   const outbox: Outbox = {
     async toOwner(text) {
       for (const chunk of splitForTelegram(text)) await bot.api.sendMessage(ownerId, chunk);
+    },
+    async taskReminder(task) {
+      const keyboard = new InlineKeyboard()
+        .text("Done", taskCallback(task.id, "done"))
+        .text("+1 hour", taskCallback(task.id, "hour"))
+        .text("Tomorrow 9:00", taskCallback(task.id, "tomorrow"));
+      const lines = [`⏰ ${task.title}`];
+      if (task.notes) lines.push(task.notes);
+      if (task.dueAt) lines.push(`Due ${formatLocal(task.dueAt, timezone)} · #${task.id}`);
+      await bot.api.sendMessage(ownerId, lines.join("\n"), { reply_markup: keyboard });
     },
     async typing(chatId) {
       await bot.api.sendChatAction(chatId, "typing").catch(() => undefined);
@@ -108,4 +172,11 @@ export function createBot(deps: {
   };
 
   return { bot, outbox, presenter };
+}
+
+function tomorrowAtNine(timezone: string): Date {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return parseDueDate(`${d.toISOString().slice(0, 10)}T09:00`, timezone);
 }

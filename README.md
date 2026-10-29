@@ -2,7 +2,7 @@
 
 A multi-agent platform that runs Flowtika's operations. You talk to a Chief of Staff agent on Telegram; it remembers the conversation, hands work to specialist agents, and holds anything that reaches other people or spends money until you approve it.
 
-This is **Phase 0, the foundation**: Telegram bot, conversation memory, event queue, scheduler, approval buttons and audit log. Phase 1 adds tasks, inbox, call summaries and the knowledge layer.
+Built so far: the Phase 0 foundation (Telegram bot, conversation memory, event queue, scheduler, approval buttons, audit log) and Phase 1 tasks and reminders. Still to come in Phase 1: voice notes, inbox, calendar, call summaries and the knowledge layer.
 
 ## How it fits together
 
@@ -56,11 +56,20 @@ You need [Node.js 22+](https://nodejs.org), [Docker Desktop](https://www.docker.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists commands |
+| `/tasks` | All open tasks |
+| `/today` | Tasks due today or overdue |
+| `/done 3` | Marks task #3 done |
 | `/pending` | Approvals waiting for you |
 | `/reset` | Forgets the conversation |
 | `/demo_approval` | Sends an approval card so you can try Approve and Reject |
 
 The bot only answers the Telegram user id in `TELEGRAM_OWNER_ID`. Messages from anyone else are ignored and logged.
+
+## Tasks and reminders
+
+Just say it: "remind me to call Dana tomorrow at 10", "add a task to send the college a quote by Sunday", "the proposal is waiting on the client", "what's on my plate?". The Chief of Staff adds or updates tasks and confirms each change under its reply (✓ Added #1 ...). Tasks have a status (to do, in progress, waiting, done, cancelled), a priority and an optional due time.
+
+When a task comes due you get a reminder with **Done**, **+1 hour** and **Tomorrow 9:00** buttons. Each due time reminds once; moving the due time re-arms it. The morning check-in lists what's overdue or due today.
 
 ## Model backend
 

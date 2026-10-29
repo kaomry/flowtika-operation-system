@@ -13,6 +13,7 @@ import { logger as log } from "./logger.ts";
 import { createModelBackend } from "./models/index.ts";
 import { startQueue } from "./queue/boss.ts";
 import { Jobs } from "./queue/jobs.ts";
+import { TaskService } from "./tasks/service.ts";
 import { registerWorkers } from "./worker.ts";
 import type { Config } from "./config.ts";
 
@@ -38,18 +39,21 @@ console.log("✓ database reachable and migrated");
 const boss = await startQueue(url, log);
 console.log("✓ queue started");
 
-const runtime = new AgentRuntime(db, createModelBackend(config), { memoryMessages: 10, timezone: env.TIMEZONE ?? "UTC" });
+const tasks = new TaskService(db, env.TIMEZONE ?? "UTC");
+const runtime = new AgentRuntime(db, createModelBackend(config), tasks, { memoryMessages: 10, timezone: env.TIMEZONE ?? "UTC" });
 const replies: string[] = [];
 const done = new Promise<void>((resolve) => {
   void registerWorkers({
     boss,
     runtime,
     approvals: new ApprovalService(db),
+    tasks,
     outbox: {
       toOwner: async (text) => {
         replies.push(text);
         resolve();
       },
+      taskReminder: async () => undefined,
       typing: async () => undefined,
     },
     ownerChatId: CHECK_CHAT_ID,
