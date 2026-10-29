@@ -14,7 +14,7 @@ import { createModelBackend } from "./models/index.ts";
 import { startQueue } from "./queue/boss.ts";
 import { Jobs } from "./queue/jobs.ts";
 import { TaskService } from "./tasks/service.ts";
-import { registerWorkers } from "./worker.ts";
+import { AGENT_FAILURE_PREFIX, registerWorkers } from "./worker.ts";
 import type { Config } from "./config.ts";
 
 const CHECK_CHAT_ID = -1;
@@ -69,7 +69,15 @@ const timeout = setTimeout(() => {
 await done;
 clearTimeout(timeout);
 
-console.log(`✓ ${chiefOfStaff.name} replied via ${config.MODEL_BACKEND}: ${replies[0]}`);
+const reply = replies[0] ?? "";
+const failed = reply.startsWith(AGENT_FAILURE_PREFIX);
+if (failed) {
+  console.error(`✗ ${chiefOfStaff.name} failed via ${config.MODEL_BACKEND}: ${reply.slice(AGENT_FAILURE_PREFIX.length).trim()}`);
+  if (/not logged in/i.test(reply)) console.error("  Sign in to Claude Code: run `claude`, then type /login.");
+} else {
+  console.log(`✓ ${chiefOfStaff.name} replied via ${config.MODEL_BACKEND}: ${reply}`);
+}
 await clearMessages(db, CHECK_CHAT_ID);
 await boss.stop();
 await db.end();
+process.exit(failed ? 1 : 0);

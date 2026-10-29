@@ -14,6 +14,9 @@ export interface Outbox {
   typing(chatId: number): Promise<void>;
 }
 
+/** Starts the message the owner gets when an agent fails, so callers can tell failure from a reply. */
+export const AGENT_FAILURE_PREFIX = "Something went wrong while answering:";
+
 export const DAILY_BRIEF_INSTRUCTION =
   "[Scheduled morning check-in] Write Omry a short good-morning message. List the tasks that " +
   "are overdue or due today, then anything else open that may need attention, and ask what the " +
@@ -39,7 +42,7 @@ export async function registerWorkers(deps: {
       await outbox.toOwner(reply);
     } catch (err) {
       log.error({ err }, "chief of staff failed");
-      await outbox.toOwner(`Something went wrong while answering: ${(err as Error).message}`);
+      await outbox.toOwner(`${AGENT_FAILURE_PREFIX} ${(err as Error).message}`);
     }
   });
 
