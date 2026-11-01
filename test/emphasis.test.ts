@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildMime } from "../src/google/gmail.ts";
 import type { Fetch } from "../src/google/oauth.ts";
 import { NotionClient } from "../src/notion/client.ts";
-import { emphasisRuns, emphasisToHtml, stripEmphasis } from "../src/outreach/emphasis.ts";
+import { emphasisRuns, emphasisToHtml, stripEmphasis, withoutSignature } from "../src/outreach/emphasis.ts";
+import { GmailClient } from "../src/google/gmail.ts";
 
 describe("bold phrases", () => {
   it("splits a line into plain and bold runs", () => {
@@ -18,7 +19,9 @@ describe("bold phrases", () => {
 
   it("strips markers for plain text and renders bold for HTML", () => {
     expect(stripEmphasis("היי,\n*כסף על הרצפה*")).toBe("היי,\nכסף על הרצפה");
-    expect(emphasisToHtml("היי,\n*כסף* <על> הרצפה")).toBe('<div dir="rtl">היי,<br><b>כסף</b> &lt;על&gt; הרצפה</div>');
+    expect(emphasisToHtml("היי,\n*כסף* <על> הרצפה")).toBe(
+      '<div dir="rtl" style="direction:rtl;text-align:right">היי,<br><b>כסף</b> &lt;על&gt; הרצפה</div>',
+    );
     expect(emphasisToHtml("Hi *Dana*")).toBe('<div dir="ltr">Hi <b>Dana</b></div>');
   });
 
@@ -41,5 +44,26 @@ describe("bold phrases", () => {
       { type: "text", text: { content: "היי " } },
       { type: "text", text: { content: "דנה" }, annotations: { bold: true } },
     ]);
+  });
+
+  it("marks Hebrew subjects right to left", () => {
+    const decoded = (mime: string) =>
+      Buffer.from(/Subject: =\?UTF-8\?B\?(.+)\?=/.exec(mime)![1]!, "base64").toString("utf8");
+    expect(decoded(buildMime({ to: "a", subject: "המשקיע של Realty Bundles", body: "" }))).toBe("\u200Fהמשקיע של Realty Bundles");
+    expect(decoded(buildMime({ to: "a", subject: "Hello", body: "" }))).toBe("Hello");
+  });
+
+  it("drops the text signature only when the body ends with it", () => {
+    expect(withoutSignature("היי\nעמרי\nOmry Kaufman\n055\n", "Omry Kaufman\n055")).toBe("היי\nעמרי");
+    expect(withoutSignature("היי\nעמרי", "Omry Kaufman\n055")).toBe("היי\nעמרי");
+  });
+
+  it("reads the default Gmail signature", async () => {
+    const fetchFn = (async () =>
+      new Response(
+        JSON.stringify({ sendAs: [{ isPrimary: true, signature: "old" }, { isDefault: true, signature: "<b>Omry</b>" }] }),
+        { status: 200 },
+      )) as Fetch;
+    expect(await new GmailClient(async () => "t", fetchFn).signatureHtml()).toBe("<b>Omry</b>");
   });
 });

@@ -41,7 +41,9 @@ describe.skipIf(!url)("outreach drafts", () => {
     await db.query("truncate outreach_rules, outreach_drafts, audit_log restart identity cascade");
   });
 
-  function setup(opts: { leads?: Lead[]; gmailFails?: boolean; sent?: string[]; repliedFrom?: string[] } = {}) {
+  function setup(
+    opts: { leads?: Lead[]; gmailFails?: boolean; sent?: string[]; repliedFrom?: string[]; signature?: string } = {},
+  ) {
     const leads = opts.leads ?? [lead("p1", "Dana Levi", STATUS.potential, "dana@college.ac.il")];
     const gmailDrafts: { to: string; subject: string; body: string; html?: string }[] = [];
     const appended: { pageId: string; heading: string; text: string }[] = [];
@@ -63,7 +65,15 @@ describe.skipIf(!url)("outreach drafts", () => {
         statuses.push([pageId, status]);
       },
     } as unknown as NotionClient;
+    const updated: { id: string; html?: string }[] = [];
     const gmail = {
+      async signatureHtml() {
+        return opts.signature ?? "";
+      },
+      async updateDraft(id: string, d: { html?: string }) {
+        updated.push({ id, html: d.html });
+        return { id };
+      },
       async createDraft(d: { to: string; subject: string; body: string; html?: string }) {
         if (opts.gmailFails) throw new Error("HTTP 401");
         gmailDrafts.push(d);
@@ -92,10 +102,10 @@ describe.skipIf(!url)("outreach drafts", () => {
       gmail: async () => ({ gmail, account: "me@flowtika.com" }),
       backend,
       styleGuidePath: "/nonexistent",
-      signature: "Omry",
+      signature: "Omry Kaufman\n052-4222014",
       log: logger,
     });
-    return { service, gmailDrafts, appended, statuses };
+    return { service, gmailDrafts, appended, statuses, updated };
   }
 
   it("drafts, revises from a comment, and keeps the comment as a rule once", async () => {
@@ -125,6 +135,25 @@ describe.skipIf(!url)("outreach drafts", () => {
     expect(await drafts.get(draft.id)).toMatchObject({ status: "saved", gmailDraftId: "g1" });
     const { rows } = await db.query("select action from audit_log order by id");
     expect(rows.map((r) => r.action)).toContain("gmail.draft.created");
+  });
+
+  it("uses the Gmail signature in place of the text one, and refreshes a saved draft", async () => {
+    const { service, updated } = setup({ signature: '<img src="logo.png">' });
+    const lead1 = lead("p1", "Dana Levi", STATUS.potential, "dana@college.ac.il");
+    const draft = await drafts.create({
+      leadPageId: "p1",
+      leadName: lead1.name,
+      toAddress: lead1.email,
+      subject: "נושא",
+      body: "היי *דנה*,\nעמרי\nOmry Kaufman\n052-4222014",
+      angle: "a",
+    });
+    await service.save(draft.id);
+    const id = await service.refreshGmailDraft(draft.id);
+    expect(id).toBe("g1");
+    expect(updated[0]!.html).toBe(
+      '<div dir="rtl" style="direction:rtl;text-align:right">היי <b>דנה</b>,<br>עמרי<br><div dir="ltr" class="gmail_signature"><img src="logo.png"></div></div>',
+    );
   });
 
   it("leaves the draft pending when Gmail fails", async () => {

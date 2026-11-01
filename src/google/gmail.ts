@@ -101,6 +101,26 @@ export class GmailClient {
     return (raw.messages ?? []).map(toMeta).sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
   }
 
+  /**
+   * The HTML signature set in Gmail settings for the account's main address, logo included,
+   * or "" if there isn't one.
+   */
+  async signatureHtml(): Promise<string> {
+    const res = await this.call<{ sendAs?: { isPrimary?: boolean; isDefault?: boolean; signature?: string }[] }>(
+      "/settings/sendAs",
+    );
+    const all = res.sendAs ?? [];
+    const main = all.find((a) => a.isDefault) ?? all.find((a) => a.isPrimary) ?? all[0];
+    return main?.signature ?? "";
+  }
+
+  /** Replaces the content of an existing draft. Still reaches nobody until the owner sends it. */
+  async updateDraft(id: string, draft: DraftInput): Promise<{ id: string }> {
+    const message: { raw: string; threadId?: string } = { raw: Buffer.from(buildMime(draft)).toString("base64url") };
+    if (draft.threadId) message.threadId = draft.threadId;
+    return this.call<{ id: string }>(`/drafts/${id}`, { method: "PUT", body: JSON.stringify({ id, message }) });
+  }
+
   /** Saves a draft in the owner's own mailbox. It reaches nobody until the owner sends it. */
   async createDraft(draft: DraftInput): Promise<{ id: string }> {
     const message: { raw: string; threadId?: string } = { raw: Buffer.from(buildMime(draft)).toString("base64url") };
@@ -172,9 +192,15 @@ export function htmlToText(html: string): string {
     .replace(/[ \t]+\n/g, "\n");
 }
 
+const HEBREW = /[\u0590-\u05FF]/;
+const RLM = "\u200F";
+
 /** RFC 2822 message with UTF-8 headers (for Hebrew subjects), a plain-text body and an optional HTML one. */
 export function buildMime(draft: DraftInput): string {
-  const encodedSubject = `=?UTF-8?B?${Buffer.from(draft.subject, "utf8").toString("base64")}?=`;
+  // A right-to-left mark first makes mail clients show a Hebrew subject right to left, even when
+  // it contains English words such as a company name.
+  const subject = HEBREW.test(draft.subject) && !draft.subject.startsWith(RLM) ? `${RLM}${draft.subject}` : draft.subject;
+  const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
   const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
   const headers = [`To: ${draft.to}`, `Subject: ${encodedSubject}`, "MIME-Version: 1.0"];
   if (!draft.html) {

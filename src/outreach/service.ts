@@ -9,7 +9,8 @@ import type { ModelBackend } from "../models/types.ts";
 import type { Lead, NotionClient } from "../notion/client.ts";
 import type { GmailSource } from "../worker.ts";
 import type { Draft, DraftStore } from "./drafts.ts";
-import { emphasisToHtml, stripEmphasis } from "./emphasis.ts";
+import { emphasisToHtml, stripEmphasis, withoutSignature } from "./emphasis.ts";
+import type { DraftInput, GmailClient } from "../google/gmail.ts";
 import type { ExampleStore } from "./examples.ts";
 import { writeDraft } from "./writer.ts";
 
@@ -161,14 +162,7 @@ export class OutreachService {
     if (!claimed) return null;
     let gmailDraftId: string;
     try {
-      gmailDraftId = (
-        await connected.gmail.createDraft({
-          to: claimed.toAddress ?? "",
-          subject: stripEmphasis(claimed.subject),
-          body: stripEmphasis(claimed.body),
-          html: emphasisToHtml(claimed.body),
-        })
-      ).id;
+      gmailDraftId = (await connected.gmail.createDraft(await this.gmailDraft(connected.gmail, claimed))).id;
     } catch (err) {
       await this.deps.drafts.reopen(draftId);
       throw err;
@@ -190,6 +184,38 @@ export class OutreachService {
       notionProblem = (err as Error).message;
     }
     return { draft: { ...claimed, gmailDraftId }, gmailDraftId, notionProblem };
+  }
+
+  /**
+   * Rebuilds the Gmail draft for a saved email with the current formatting and signature, in place,
+   * so the owner's Drafts folder doesn't fill up with copies. Nothing is sent.
+   */
+  async refreshGmailDraft(draftId: number): Promise<string> {
+    const connected = await this.deps.gmail();
+    if (!connected) throw new OutreachError("Gmail isn't connected.");
+    const draft = await this.deps.drafts.get(draftId);
+    if (!draft?.gmailDraftId) throw new OutreachError(`Draft #${draftId} isn't saved in Gmail.`);
+    const { id } = await connected.gmail.updateDraft(draft.gmailDraftId, await this.gmailDraft(connected.gmail, draft));
+    await audit(this.deps.db, "outreach-writer", "gmail.draft.updated", { draftId, gmailDraftId: id });
+    return id;
+  }
+
+  /**
+   * What goes into Gmail: plain text without bold markers, and HTML that is right-to-left for
+   * Hebrew and ends with the owner's own Gmail signature (with its logo) instead of the text one.
+   */
+  private async gmailDraft(gmail: GmailClient, draft: { toAddress: string | null; subject: string; body: string }): Promise<DraftInput> {
+    const signatureHtml = await gmail.signatureHtml().catch((err) => {
+      this.deps.log.warn({ err }, "could not read the Gmail signature, so the text one is used");
+      return "";
+    });
+    const htmlBody = signatureHtml ? withoutSignature(draft.body, this.deps.signature) : draft.body;
+    return {
+      to: draft.toAddress ?? "",
+      subject: stripEmphasis(draft.subject),
+      body: stripEmphasis(draft.body),
+      html: emphasisToHtml(htmlBody, signatureHtml),
+    };
   }
 
   /**

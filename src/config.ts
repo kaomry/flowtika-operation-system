@@ -33,7 +33,7 @@ const schema = z.object({
   // Lines separated by "\n" in .env
   OUTREACH_SIGNATURE: z
     .string()
-    .default("Omry Kaufman\nFounder & RevOps Strategic\n055-4222014")
+    .default("Omry Kaufman\nFounder & RevOps Strategic\n052-4222014")
     .transform((v) => v.replace(/\\n/g, "\n")),
   OUTREACH_STATUS_SYNC_CRON: z.string().default("*/30 * * * *").transform((v) => v.trim() || undefined),
   TIMEZONE: z.string().default("Asia/Jerusalem"),

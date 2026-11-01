@@ -17,7 +17,7 @@ const lead: Lead = {
 
 const input: WriterInput = {
   styleGuide: "Open with היי [name],",
-  signature: "Omry Kaufman\nFounder & RevOps Strategic\n055-4222014",
+  signature: "Omry Kaufman\nFounder & RevOps Strategic\n052-4222014",
   rules: ["Never mention AI in the first line"],
   examples: [],
   lead,
@@ -30,7 +30,7 @@ describe("outreach writer", () => {
     const system = writerSystemPrompt(input);
     expect(system).toContain("Open with היי [name],");
     expect(system).toContain("- Never mention AI in the first line");
-    expect(system).toContain("055-4222014");
+    expect(system).toContain("052-4222014");
     const user = writerUserMessage(input);
     expect(user).toContain("Met at the conference");
     expect(user).toContain("Write the first cold email");
