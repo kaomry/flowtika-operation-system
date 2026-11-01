@@ -152,7 +152,7 @@ describe.skipIf(!url)("outreach drafts", () => {
     const id = await service.refreshGmailDraft(draft.id);
     expect(id).toBe("g1");
     expect(updated[0]!.html).toBe(
-      '<div dir="rtl" style="direction:rtl;text-align:right">היי <b>דנה</b>,<br>עמרי<br><div class="gmail_signature"><img src="logo.png"></div></div>',
+      '<div dir="rtl" style="direction:rtl;text-align:right">היי <b>דנה</b>,<br>עמרי<br><div dir="ltr" class="gmail_signature"><img src="logo.png"></div></div>',
     );
   });
 

@@ -37,7 +37,7 @@ export function emphasisToHtml(text: string, signatureHtml = ""): string {
     .split("\n")
     .map((line) => emphasisRuns(line).map((r) => (r.bold ? `<b>${escapeHtml(r.text)}</b>` : escapeHtml(r.text))).join(""));
   const style = rtl ? ' style="direction:rtl;text-align:right"' : "";
-  const signature = signatureHtml ? `<br><div class="gmail_signature">${signatureHtml}</div>` : "";
+  const signature = signatureHtml ? `<br><div dir="ltr" class="gmail_signature">${signatureHtml}</div>` : "";
   return `<div dir="${rtl ? "rtl" : "ltr"}"${style}>${lines.join("<br>")}${signature}</div>`;
 }
 
