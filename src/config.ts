@@ -27,6 +27,15 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => (v ?? "").split(",").map((a) => a.trim().toLowerCase()).filter(Boolean)),
+  NOTION_TOKEN: optionalString,
+  NOTION_LEADS_DATA_SOURCE: z.string().default("c84cae23-1208-8343-973d-871608f38a92"),
+  OUTREACH_STYLE_GUIDE: z.string().default("~/.flowtika/data/cold-email-style-guide.md"),
+  // Lines separated by "\n" in .env
+  OUTREACH_SIGNATURE: z
+    .string()
+    .default("Omry Kaufman\nFounder & RevOps Strategic\n055-4222014")
+    .transform((v) => v.replace(/\\n/g, "\n")),
+  OUTREACH_STATUS_SYNC_CRON: z.string().default("*/30 * * * *").transform((v) => v.trim() || undefined),
   TIMEZONE: z.string().default("Asia/Jerusalem"),
   DAILY_BRIEF_CRON: optionalString,
   MEMORY_MESSAGES: z.coerce.number().int().positive().default(30),

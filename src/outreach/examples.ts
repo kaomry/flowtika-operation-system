@@ -139,6 +139,16 @@ export class ExampleStore {
     return toExample(rows[0]);
   }
 
+  /** Kept examples to show the writer: gold first, then ones that got a reply, newest first. */
+  async bestExamples(limit: number, language?: Language): Promise<OutreachExample[]> {
+    const { rows } = await this.db.query<Row>(
+      `select * from outreach_examples where status = 'kept' and ($2::text is null or language = $2)
+       order by gold desc, replied desc, sent_at desc limit $1`,
+      [limit, language ?? null],
+    );
+    return rows.map(toExample);
+  }
+
   async counts(): Promise<ReviewCounts> {
     const { rows } = await this.db.query<{ status: ExampleStatus; gold: boolean; n: string }>(
       "select status, gold, count(*) as n from outreach_examples group by status, gold",
