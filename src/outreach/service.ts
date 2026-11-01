@@ -9,6 +9,7 @@ import type { ModelBackend } from "../models/types.ts";
 import type { Lead, NotionClient } from "../notion/client.ts";
 import type { GmailSource } from "../worker.ts";
 import type { Draft, DraftStore } from "./drafts.ts";
+import { emphasisToHtml, stripEmphasis } from "./emphasis.ts";
 import type { ExampleStore } from "./examples.ts";
 import { writeDraft } from "./writer.ts";
 
@@ -161,7 +162,12 @@ export class OutreachService {
     let gmailDraftId: string;
     try {
       gmailDraftId = (
-        await connected.gmail.createDraft({ to: claimed.toAddress ?? "", subject: claimed.subject, body: claimed.body })
+        await connected.gmail.createDraft({
+          to: claimed.toAddress ?? "",
+          subject: stripEmphasis(claimed.subject),
+          body: stripEmphasis(claimed.body),
+          html: emphasisToHtml(claimed.body),
+        })
       ).id;
     } catch (err) {
       await this.deps.drafts.reopen(draftId);

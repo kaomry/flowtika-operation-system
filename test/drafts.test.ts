@@ -43,7 +43,7 @@ describe.skipIf(!url)("outreach drafts", () => {
 
   function setup(opts: { leads?: Lead[]; gmailFails?: boolean; sent?: string[]; repliedFrom?: string[] } = {}) {
     const leads = opts.leads ?? [lead("p1", "Dana Levi", STATUS.potential, "dana@college.ac.il")];
-    const gmailDrafts: { to: string; subject: string; body: string }[] = [];
+    const gmailDrafts: { to: string; subject: string; body: string; html?: string }[] = [];
     const appended: { pageId: string; heading: string; text: string }[] = [];
     const statuses: [string, string][] = [];
     const notion = {
@@ -64,7 +64,7 @@ describe.skipIf(!url)("outreach drafts", () => {
       },
     } as unknown as NotionClient;
     const gmail = {
-      async createDraft(d: { to: string; subject: string; body: string }) {
+      async createDraft(d: { to: string; subject: string; body: string; html?: string }) {
         if (opts.gmailFails) throw new Error("HTTP 401");
         gmailDrafts.push(d);
         return { id: `g${gmailDrafts.length}` };
@@ -80,7 +80,7 @@ describe.skipIf(!url)("outreach drafts", () => {
       name: "fake",
       async complete() {
         n++;
-        return { text: "", model: "fake", structured: { subject: `Subject ${n}`, body: `Body ${n}`, angle: "angle" } };
+        return { text: "", model: "fake", structured: { subject: `Subject ${n}`, body: `Body *${n}*`, angle: "angle" } };
       },
     };
     const service = new OutreachService({
@@ -117,8 +117,10 @@ describe.skipIf(!url)("outreach drafts", () => {
     const draft = await service.draftFor(lead("p1", "Dana Levi", STATUS.potential, "dana@college.ac.il"));
     const [a, b] = await Promise.all([service.save(draft.id), service.save(draft.id)]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
-    expect(gmailDrafts).toEqual([{ to: "dana@college.ac.il", subject: "Subject 1", body: "Body 1" }]);
-    expect(appended[0]).toMatchObject({ pageId: "p1", text: "נושא: Subject 1\n\nBody 1" });
+    expect(gmailDrafts).toEqual([
+      { to: "dana@college.ac.il", subject: "Subject 1", body: "Body 1", html: '<div dir="ltr">Body <b>1</b></div>' },
+    ]);
+    expect(appended[0]).toMatchObject({ pageId: "p1", text: "נושא: Subject 1\n\nBody *1*" });
     expect(appended[0]!.heading).toMatch(/^מייל\/פנייה \(\d{4}-\d{2}-\d{2}\)$/);
     expect(await drafts.get(draft.id)).toMatchObject({ status: "saved", gmailDraftId: "g1" });
     const { rows } = await db.query("select action from audit_log order by id");

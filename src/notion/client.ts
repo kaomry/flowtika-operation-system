@@ -1,4 +1,5 @@
 import type { Fetch } from "../google/oauth.ts";
+import { emphasisRuns } from "../outreach/emphasis.ts";
 
 const API = "https://api.notion.com/v1";
 // 2025-09-03 queries data sources; the Leads database has more than one, so the old
@@ -130,12 +131,20 @@ export class NotionClient {
     });
   }
 
-  /** Appends a heading and the text below it to the end of a page. */
+  /** Appends a heading and the text below it to the end of a page. *Asterisked* phrases become bold. */
   async appendSection(pageId: string, heading: string, text: string): Promise<void> {
     const paragraphs = text.split("\n").map((line) => ({
       object: "block",
       type: "paragraph",
-      paragraph: { rich_text: line ? chunks(line).map((content) => ({ type: "text", text: { content } })) : [] },
+      paragraph: {
+        rich_text: emphasisRuns(line).flatMap((run) =>
+          chunks(run.text).map((content) => ({
+            type: "text",
+            text: { content },
+            ...(run.bold ? { annotations: { bold: true } } : {}),
+          })),
+        ),
+      },
     }));
     const children = [
       { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: heading } }] } },
