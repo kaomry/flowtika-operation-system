@@ -3,8 +3,9 @@ import { chiefOfStaff } from "./agents/chiefOfStaff.ts";
 import type { AgentRuntime } from "./agents/runtime.ts";
 import type { ApprovalService } from "./approvals/service.ts";
 import type { Logger } from "./logger.ts";
-import { Jobs, type ApprovalExecuteJob, type InboundMessageJob } from "./queue/jobs.ts";
+import { Jobs, type ApprovalExecuteJob, type InboundMessageJob, type InboundVoiceJob } from "./queue/jobs.ts";
 import type { Task, TaskService } from "./tasks/service.ts";
+import type { Transcriber } from "./voice/transcriber.ts";
 
 export interface Outbox {
   /** Sends a message to the owner. Messages to the owner never need approval. */
@@ -12,6 +13,8 @@ export interface Outbox {
   /** Sends a reminder for a task that has come due, with buttons to act on it. */
   taskReminder(task: Task): Promise<void>;
   typing(chatId: number): Promise<void>;
+  /** Downloads a file the owner sent, such as a voice note. */
+  downloadFile(fileId: string): Promise<Buffer>;
 }
 
 /** Starts the message the owner gets when an agent fails, so callers can tell failure from a reply. */
@@ -27,15 +30,14 @@ export async function registerWorkers(deps: {
   runtime: AgentRuntime;
   approvals: ApprovalService;
   tasks: TaskService;
+  transcriber?: Transcriber;
   outbox: Outbox;
   ownerChatId: number;
   log: Logger;
 }): Promise<void> {
-  const { boss, runtime, approvals, tasks, outbox, ownerChatId, log } = deps;
+  const { boss, runtime, approvals, tasks, transcriber, outbox, ownerChatId, log } = deps;
 
-  await boss.work<InboundMessageJob>(Jobs.inboundMessage, async ([job]) => {
-    if (!job) return;
-    const { chatId, text } = job.data;
+  const answer = async (chatId: number, text: string) => {
     await outbox.typing(chatId);
     try {
       const reply = await runtime.reply(chiefOfStaff, chatId, text);
@@ -44,6 +46,36 @@ export async function registerWorkers(deps: {
       log.error({ err }, "chief of staff failed");
       await outbox.toOwner(`${AGENT_FAILURE_PREFIX} ${(err as Error).message}`);
     }
+  };
+
+  await boss.work<InboundMessageJob>(Jobs.inboundMessage, async ([job]) => {
+    if (!job) return;
+    await answer(job.data.chatId, job.data.text);
+  });
+
+  await boss.work<InboundVoiceJob>(Jobs.inboundVoice, async ([job]) => {
+    if (!job) return;
+    const { chatId, fileId } = job.data;
+    if (!transcriber) {
+      await outbox.toOwner("Voice notes aren't set up on this machine yet, so please type for now.");
+      return;
+    }
+    await outbox.typing(chatId);
+    let transcript: string;
+    try {
+      transcript = await transcriber.transcribe(await outbox.downloadFile(fileId));
+    } catch (err) {
+      log.error({ err }, "transcription failed");
+      await outbox.toOwner(`I couldn't transcribe that voice note: ${(err as Error).message}`);
+      return;
+    }
+    if (!transcript) {
+      await outbox.toOwner("I couldn't hear anything in that voice note.");
+      return;
+    }
+    // Show what was heard, so a mistranscription is caught before anything acts on it.
+    await outbox.toOwner(`🎙 ${transcript}`);
+    await answer(chatId, `[Voice note] ${transcript}`);
   });
 
   await boss.work<ApprovalExecuteJob>(Jobs.approvalExecute, async ([job]) => {

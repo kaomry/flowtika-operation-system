@@ -2,7 +2,7 @@
 
 A multi-agent platform that runs Flowtika's operations. You talk to a Chief of Staff agent on Telegram; it remembers the conversation, hands work to specialist agents, and holds anything that reaches other people or spends money until you approve it.
 
-Built so far: the Phase 0 foundation (Telegram bot, conversation memory, event queue, scheduler, approval buttons, audit log) and Phase 1 tasks and reminders. Still to come in Phase 1: voice notes, inbox, calendar, call summaries and the knowledge layer.
+Built so far: the Phase 0 foundation (Telegram bot, conversation memory, event queue, scheduler, approval buttons, audit log) and Phase 1 tasks, reminders and voice notes. Still to come in Phase 1: inbox, calendar, call summaries and the knowledge layer.
 
 ## How it fits together
 
@@ -70,6 +70,12 @@ The bot only answers the Telegram user id in `TELEGRAM_OWNER_ID`. Messages from 
 Just say it: "remind me to call Dana tomorrow at 10", "add a task to send the college a quote by Sunday", "the proposal is waiting on the client", "what's on my plate?". The Chief of Staff adds or updates tasks and confirms each change under its reply (✓ Added #1 ...). Tasks have a status (to do, in progress, waiting, done, cancelled), a priority and an optional due time.
 
 When a task comes due you get a reminder with **Done**, **+1 hour** and **Tomorrow 9:00** buttons. Each due time reminds once; moving the due time re-arms it. The morning check-in lists what's overdue or due today.
+
+## Voice notes
+
+Send the bot a voice note in Hebrew or English. It's transcribed on the Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), so it's free and the audio never leaves the machine. The bot first shows what it heard (🎙 ...), then answers it like a typed message, so a misheard name is easy to spot.
+
+Setup: install `ffmpeg` and build whisper.cpp's `whisper-cli`, download a multilingual model (for example `ggml-large-v3-turbo.bin`), then set `WHISPER_MODEL` to the model's path in `.env` (and `WHISPER_BIN` / `FFMPEG_BIN` if they aren't on `PATH`). With `WHISPER_MODEL` empty, voice notes are off and the bot says so.
 
 ## Model backend
 

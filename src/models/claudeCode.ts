@@ -17,7 +17,7 @@ export type ProcessRunner = (
   options: { cwd: string; timeoutMs: number },
 ) => Promise<ProcessResult>;
 
-const defaultRunner: ProcessRunner = (bin, args, stdin, { cwd, timeoutMs }) =>
+export const defaultRunner: ProcessRunner = (bin, args, stdin, { cwd, timeoutMs }) =>
   new Promise((resolve, reject) => {
     const child = spawn(bin, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";

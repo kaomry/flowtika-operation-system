@@ -5,7 +5,7 @@ import { audit } from "../db/audit.ts";
 import { clearMessages } from "../db/messages.ts";
 import type { Db } from "../db/pool.ts";
 import type { Logger } from "../logger.ts";
-import { Jobs, type ApprovalExecuteJob, type InboundMessageJob } from "../queue/jobs.ts";
+import { Jobs, type ApprovalExecuteJob, type InboundMessageJob, type InboundVoiceJob } from "../queue/jobs.ts";
 import { describeTask } from "../agents/taskActions.ts";
 import type { Task, TaskService } from "../tasks/service.ts";
 import { formatLocal, parseDueDate } from "../tasks/time.ts";
@@ -21,7 +21,7 @@ import {
 
 const HELP = `Flowtika OS
 
-Write to me in Hebrew or English. I remember our conversation and keep your task list: "remind me to call Dana tomorrow at 10", "the proposal is waiting on the client", "what's on my plate?"
+Write or send a voice note, in Hebrew or English. I remember our conversation and keep your task list: "remind me to call Dana tomorrow at 10", "the proposal is waiting on the client", "what's on my plate?"
 
 /tasks  all open tasks
 /today  tasks due today or overdue
@@ -128,7 +128,15 @@ export function createBot(deps: {
     await boss.send(Jobs.inboundMessage, { chatId: ctx.chat.id, text: ctx.message.text } satisfies InboundMessageJob);
   });
 
-  bot.on("message:voice", (ctx) => ctx.reply("Voice notes arrive in Phase 1. For now, please type."));
+  bot.on(["message:voice", "message:audio"], async (ctx) => {
+    const file = ctx.message.voice ?? ctx.message.audio;
+    if (!file) return;
+    // Telegram's Bot API only serves files up to 20 MB.
+    if ((file.file_size ?? 0) > 20 * 1024 * 1024) {
+      return ctx.reply("That recording is over Telegram's 20 MB limit for bots. Please send a shorter one.");
+    }
+    await boss.send(Jobs.inboundVoice, { chatId: ctx.chat.id, fileId: file.file_id } satisfies InboundVoiceJob);
+  });
 
   bot.catch((err) => log.error({ err: err.error }, "telegram handler failed"));
 
@@ -145,6 +153,13 @@ export function createBot(deps: {
       if (task.notes) lines.push(task.notes);
       if (task.dueAt) lines.push(`Due ${formatLocal(task.dueAt, timezone)} · #${task.id}`);
       await bot.api.sendMessage(ownerId, lines.join("\n"), { reply_markup: keyboard });
+    },
+    async downloadFile(fileId) {
+      const file = await bot.api.getFile(fileId);
+      if (!file.file_path) throw new Error("Telegram didn't return a download path");
+      const res = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
+      if (!res.ok) throw new Error(`download failed with HTTP ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
     },
     async typing(chatId) {
       await bot.api.sendChatAction(chatId, "typing").catch(() => undefined);
