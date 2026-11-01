@@ -4,13 +4,16 @@ import { loadConfig } from "./config.ts";
 import { migrate } from "./db/migrate.ts";
 import { createPool } from "./db/pool.ts";
 import { logger as log } from "./logger.ts";
+import { GmailClient } from "./google/gmail.ts";
+import { AccessTokenSource, loadAccount } from "./google/oauth.ts";
 import { createModelBackend } from "./models/index.ts";
+import { ExampleStore } from "./outreach/examples.ts";
 import { startQueue } from "./queue/boss.ts";
 import { applySchedules, defaultSchedules } from "./scheduler/schedules.ts";
 import { createBot } from "./telegram/bot.ts";
 import { TaskService } from "./tasks/service.ts";
 import { WhisperCppTranscriber } from "./voice/transcriber.ts";
-import { registerWorkers } from "./worker.ts";
+import { registerWorkers, type GmailSource } from "./worker.ts";
 
 const config = loadConfig();
 const db = createPool(config.DATABASE_URL);
@@ -26,6 +29,24 @@ const runtime = new AgentRuntime(db, backend, tasks, {
   timezone: config.TIMEZONE,
 });
 const approvals = new ApprovalService(db);
+const examples = new ExampleStore(db);
+
+const googleClient =
+  config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET
+    ? { clientId: config.GOOGLE_CLIENT_ID, clientSecret: config.GOOGLE_CLIENT_SECRET }
+    : null;
+const gmailClients = new Map<string, GmailClient>();
+const gmail: GmailSource = async () => {
+  const account = googleClient ? await loadAccount(db) : null;
+  if (!googleClient || !account) return null;
+  let client = gmailClients.get(account.refreshToken);
+  if (!client) {
+    const tokens = new AccessTokenSource(googleClient, account.refreshToken);
+    client = new GmailClient(() => tokens.get());
+    gmailClients.set(account.refreshToken, client);
+  }
+  return { gmail: client, account: account.email };
+};
 
 const { bot, outbox, presenter } = createBot({
   token: config.TELEGRAM_BOT_TOKEN,
@@ -34,6 +55,7 @@ const { bot, outbox, presenter } = createBot({
   boss,
   approvals,
   tasks,
+  examples,
   timezone: config.TIMEZONE,
   log,
 });
@@ -61,6 +83,9 @@ await registerWorkers({
   approvals,
   tasks,
   transcriber,
+  examples,
+  gmail,
+  ownerEmails: config.OWNER_EMAILS,
   outbox,
   ownerChatId: config.TELEGRAM_OWNER_ID,
   log,
