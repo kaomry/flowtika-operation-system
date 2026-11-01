@@ -69,7 +69,7 @@ describe("Gmail parsing", () => {
 
   it("encodes Hebrew subjects and bodies in a draft", () => {
     const mime = buildMime({ to: "dana@example.com", subject: "שאלה קצרה", body: "היי דנה" });
-    expect(mime).toContain(`Subject: =?UTF-8?B?${Buffer.from("שאלה קצרה").toString("base64")}?=`);
+    expect(mime).toContain(`Subject: =?UTF-8?B?${Buffer.from("\u200Fשאלה קצרה").toString("base64")}?=`);
     const body = mime.split("\r\n\r\n")[1]!;
     expect(Buffer.from(body, "base64").toString("utf8")).toBe("היי דנה");
   });

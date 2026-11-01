@@ -27,11 +27,24 @@ export const stripEmphasis = (text: string) =>
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** The email as simple HTML: bold phrases in <b>, line breaks kept, right-to-left for Hebrew. */
-export function emphasisToHtml(text: string): string {
-  const rtl = /[֐-׿]/.test(text);
+/**
+ * The email as simple HTML: bold phrases in <b>, line breaks kept, right-to-left for Hebrew.
+ * `signatureHtml` (the owner's Gmail signature, with its logo) is appended below the text.
+ */
+export function emphasisToHtml(text: string, signatureHtml = ""): string {
+  const rtl = /[\u0590-\u05FF]/.test(text);
   const lines = text
     .split("\n")
     .map((line) => emphasisRuns(line).map((r) => (r.bold ? `<b>${escapeHtml(r.text)}</b>` : escapeHtml(r.text))).join(""));
-  return `<div dir="${rtl ? "rtl" : "ltr"}">${lines.join("<br>")}</div>`;
+  const style = rtl ? ' style="direction:rtl;text-align:right"' : "";
+  const signature = signatureHtml ? `<br><div class="gmail_signature">${signatureHtml}</div>` : "";
+  return `<div dir="${rtl ? "rtl" : "ltr"}"${style}>${lines.join("<br>")}${signature}</div>`;
+}
+
+/** The body without a trailing signature block, when it ends with that signature. */
+export function withoutSignature(body: string, signature: string): string {
+  const sig = signature.trim();
+  if (!sig) return body;
+  const trimmed = body.trimEnd();
+  return trimmed.endsWith(sig) ? trimmed.slice(0, -sig.length).trimEnd() : body;
 }
