@@ -41,6 +41,8 @@ export interface DraftInput {
   to: string;
   subject: string;
   body: string;
+  /** An HTML version of the body. When set, the draft carries both, so formatting like bold survives. */
+  html?: string;
   threadId?: string;
 }
 
@@ -170,16 +172,23 @@ export function htmlToText(html: string): string {
     .replace(/[ \t]+\n/g, "\n");
 }
 
-/** RFC 2822 message with UTF-8 headers (for Hebrew subjects) and a plain-text body. */
+/** RFC 2822 message with UTF-8 headers (for Hebrew subjects), a plain-text body and an optional HTML one. */
 export function buildMime(draft: DraftInput): string {
   const encodedSubject = `=?UTF-8?B?${Buffer.from(draft.subject, "utf8").toString("base64")}?=`;
+  const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+  const headers = [`To: ${draft.to}`, `Subject: ${encodedSubject}`, "MIME-Version: 1.0"];
+  if (!draft.html) {
+    return [...headers, 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", b64(draft.body)].join("\r\n");
+  }
+  const boundary = `flowtika-${Date.now().toString(36)}`;
+  const part = (type: string, text: string) =>
+    [`--${boundary}`, `Content-Type: ${type}; charset="UTF-8"`, "Content-Transfer-Encoding: base64", "", b64(text)];
   return [
-    `To: ${draft.to}`,
-    `Subject: ${encodedSubject}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
+    ...headers,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
-    Buffer.from(draft.body, "utf8").toString("base64"),
+    ...part("text/plain", draft.body),
+    ...part("text/html", draft.html),
+    `--${boundary}--`,
   ].join("\r\n");
 }
