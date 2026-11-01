@@ -3,7 +3,16 @@ import { chiefOfStaff } from "./agents/chiefOfStaff.ts";
 import type { AgentRuntime } from "./agents/runtime.ts";
 import type { ApprovalService } from "./approvals/service.ts";
 import type { Logger } from "./logger.ts";
-import { Jobs, type ApprovalExecuteJob, type InboundMessageJob, type InboundVoiceJob } from "./queue/jobs.ts";
+import type { GmailClient } from "./google/gmail.ts";
+import { collectColdEmails } from "./outreach/collect.ts";
+import type { ExampleStore, OutreachExample } from "./outreach/examples.ts";
+import {
+  Jobs,
+  type ApprovalExecuteJob,
+  type InboundMessageJob,
+  type InboundVoiceJob,
+  type OutreachCollectJob,
+} from "./queue/jobs.ts";
 import type { Task, TaskService } from "./tasks/service.ts";
 import type { Transcriber } from "./voice/transcriber.ts";
 
@@ -15,6 +24,35 @@ export interface Outbox {
   typing(chatId: number): Promise<void>;
   /** Downloads a file the owner sent, such as a voice note. */
   downloadFile(fileId: string): Promise<Buffer>;
+  /** Shows a past email with Keep / Gold / Skip buttons. */
+  exampleCard(example: OutreachExample): Promise<void>;
+}
+
+/** The connected Gmail account, looked up per job so connecting doesn't need a restart. */
+export type GmailSource = () => Promise<{ gmail: GmailClient; account: string } | null>;
+
+export const REVIEW_BATCH = 5;
+
+export const GMAIL_NOT_CONNECTED =
+  "Gmail isn't connected yet. On the Mac, run `npm run google:connect` in the project folder and sign in, then try again.";
+
+/** Sends the next few candidates for review and says how many are left. */
+export async function sendReviewBatch(store: ExampleStore, outbox: Outbox): Promise<void> {
+  const batch = await store.nextForReview(REVIEW_BATCH);
+  if (!batch.length) {
+    const c = await store.counts();
+    await outbox.toOwner(
+      c.kept
+        ? `Nothing left to review. ${c.kept} kept (${c.gold} gold), ${c.skipped} skipped.`
+        : "Nothing to review yet. Send /collect_emails to look through your sent mail.",
+    );
+    return;
+  }
+  for (const example of batch) await outbox.exampleCard(example);
+  const left = (await store.counts()).candidate - batch.length;
+  await outbox.toOwner(
+    `Tap Keep, Gold (your best ones) or Skip on each.${left > 0 ? ` ${left} more after these: /review_emails` : ""}`,
+  );
 }
 
 /** Starts the message the owner gets when an agent fails, so callers can tell failure from a reply. */
@@ -31,11 +69,14 @@ export async function registerWorkers(deps: {
   approvals: ApprovalService;
   tasks: TaskService;
   transcriber?: Transcriber;
+  examples: ExampleStore;
+  gmail: GmailSource;
+  ownerEmails: string[];
   outbox: Outbox;
   ownerChatId: number;
   log: Logger;
 }): Promise<void> {
-  const { boss, runtime, approvals, tasks, transcriber, outbox, ownerChatId, log } = deps;
+  const { boss, runtime, approvals, tasks, transcriber, examples, gmail, ownerEmails, outbox, ownerChatId, log } = deps;
 
   const answer = async (chatId: number, text: string) => {
     await outbox.typing(chatId);
@@ -87,6 +128,32 @@ export async function registerWorkers(deps: {
   await boss.work(Jobs.dailyBrief, async () => {
     const brief = await runtime.runInstruction(chiefOfStaff, ownerChatId, DAILY_BRIEF_INSTRUCTION);
     await outbox.toOwner(brief);
+  });
+
+  await boss.work<OutreachCollectJob>(Jobs.outreachCollect, async ([job]) => {
+    if (!job) return;
+    const connected = await gmail();
+    if (!connected) {
+      await outbox.toOwner(GMAIL_NOT_CONNECTED);
+      return;
+    }
+    const since = new Date();
+    since.setMonth(since.getMonth() - job.data.months);
+    await outbox.toOwner(`Looking through ${connected.account} sent mail from the last ${job.data.months} months…`);
+    try {
+      const result = await collectColdEmails(connected.gmail, examples, connected.account, {
+        ownAddresses: ownerEmails,
+        since,
+      });
+      log.info(result, "cold email collection finished");
+      await outbox.toOwner(
+        `Checked ${result.scannedThreads} conversations and found ${result.added} new emails that look like cold outreach.`,
+      );
+      await sendReviewBatch(examples, outbox);
+    } catch (err) {
+      log.error({ err }, "cold email collection failed");
+      await outbox.toOwner(`I couldn't finish reading your sent mail: ${(err as Error).message}`);
+    }
   });
 
   await boss.work(Jobs.taskReminders, async () => {

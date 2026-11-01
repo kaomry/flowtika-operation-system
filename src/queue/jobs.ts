@@ -8,6 +8,7 @@ export const Jobs = {
   approvalExecute: "approval-execute",
   dailyBrief: "schedule-daily-brief",
   taskReminders: "schedule-task-reminders",
+  outreachCollect: "outreach-collect",
 } as const;
 
 export type JobName = (typeof Jobs)[keyof typeof Jobs];
@@ -24,4 +25,9 @@ export interface InboundVoiceJob {
 
 export interface ApprovalExecuteJob {
   approvalId: string;
+}
+
+export interface OutreachCollectJob {
+  /** How far back to look in sent mail, in months. */
+  months: number;
 }

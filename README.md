@@ -59,6 +59,8 @@ You need [Node.js 22+](https://nodejs.org), [Docker Desktop](https://www.docker.
 | `/tasks` | All open tasks |
 | `/today` | Tasks due today or overdue |
 | `/done 3` | Marks task #3 done |
+| `/collect_emails` | Finds your past cold emails in Gmail |
+| `/review_emails` | Keep or skip the cold emails found |
 | `/pending` | Approvals waiting for you |
 | `/reset` | Forgets the conversation |
 | `/demo_approval` | Sends an approval card so you can try Approve and Reject |
@@ -76,6 +78,24 @@ When a task comes due you get a reminder with **Done**, **+1 hour** and **Tomorr
 Send the bot a voice note in Hebrew or English. It's transcribed on the Mac with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), so it's free and the audio never leaves the machine. The bot first shows what it heard (🎙 ...), then answers it like a typed message, so a misheard name is easy to spot.
 
 Setup: install `ffmpeg` and build whisper.cpp's `whisper-cli`, download a multilingual model (for example `ggml-large-v3-turbo.bin`), then set `WHISPER_MODEL` to the model's path in `.env` (and `WHISPER_BIN` / `FFMPEG_BIN` if they aren't on `PATH`). With `WHISPER_MODEL` empty, voice notes are off and the bot says so.
+
+## Gmail and cold email examples
+
+The Outreach Writer learns your cold email style from what you actually sent. Gmail is connected read-only, plus permission to create drafts. The platform can't send email on its own.
+
+One-time setup (about 10 minutes):
+
+1. Go to [Google Cloud console](https://console.cloud.google.com/), signed in as the account you send cold emails from, and create a project called "Flowtika OS".
+2. **APIs & Services → Library**, search "Gmail API", click **Enable**.
+3. **Google Auth Platform → Get started**: app name "Flowtika OS", your email as support and contact email, audience **External**.
+4. **Audience → Publish app**. In "Testing" mode Google signs you out every 7 days. Published but unverified is fine for your own use: when you sign in Google warns that the app isn't verified, so click **Advanced → Go to Flowtika OS**.
+5. **Clients → Create client**, type **Desktop app**. Copy the client ID and secret into `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Put all your own addresses in `OWNER_EMAILS`.
+6. Run `npm run google:connect` and sign in. The refresh token is stored in the database, never printed or logged.
+
+Then in Telegram:
+
+- `/collect_emails` looks through the last 24 months of sent mail (`/collect_emails 6` for 6 months) for first emails to people you had never emailed before, and notes whether they replied.
+- `/review_emails` shows them five at a time. Tap **Keep**, **⭐ Gold** for your best ones, or **Skip** for anything that isn't cold outreach.
 
 ## Model backend
 

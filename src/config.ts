@@ -20,6 +20,13 @@ const schema = z.object({
   WHISPER_MODEL: optionalString,
   WHISPER_LANGUAGE: z.string().default("auto"),
   FFMPEG_BIN: z.string().default("ffmpeg"),
+  GOOGLE_CLIENT_ID: optionalString,
+  GOOGLE_CLIENT_SECRET: optionalString,
+  // Comma-separated addresses that are all the owner's, so mail between them isn't outreach
+  OWNER_EMAILS: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").split(",").map((a) => a.trim().toLowerCase()).filter(Boolean)),
   TIMEZONE: z.string().default("Asia/Jerusalem"),
   DAILY_BRIEF_CRON: optionalString,
   MEMORY_MESSAGES: z.coerce.number().int().positive().default(30),

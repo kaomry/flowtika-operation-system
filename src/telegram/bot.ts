@@ -5,15 +5,25 @@ import { audit } from "../db/audit.ts";
 import { clearMessages } from "../db/messages.ts";
 import type { Db } from "../db/pool.ts";
 import type { Logger } from "../logger.ts";
-import { Jobs, type ApprovalExecuteJob, type InboundMessageJob, type InboundVoiceJob } from "../queue/jobs.ts";
+import type { ExampleStore } from "../outreach/examples.ts";
+import {
+  Jobs,
+  type ApprovalExecuteJob,
+  type InboundMessageJob,
+  type InboundVoiceJob,
+  type OutreachCollectJob,
+} from "../queue/jobs.ts";
 import { describeTask } from "../agents/taskActions.ts";
 import type { Task, TaskService } from "../tasks/service.ts";
 import { formatLocal, parseDueDate } from "../tasks/time.ts";
-import type { Outbox } from "../worker.ts";
+import { sendReviewBatch, type Outbox } from "../worker.ts";
 import {
   approvalCallback,
   approvalCardText,
+  exampleCallback,
+  exampleCardText,
   parseApprovalCallback,
+  parseExampleCallback,
   parseTaskCallback,
   splitForTelegram,
   taskCallback,
@@ -26,6 +36,8 @@ Write or send a voice note, in Hebrew or English. I remember our conversation an
 /tasks  all open tasks
 /today  tasks due today or overdue
 /done 3  mark task #3 done
+/collect_emails  find your past cold emails in Gmail
+/review_emails  keep or skip the ones found
 /pending  approvals waiting for you
 /reset  forget this conversation
 /demo_approval  try the approval buttons
@@ -38,10 +50,11 @@ export function createBot(deps: {
   boss: PgBoss;
   approvals: ApprovalService;
   tasks: TaskService;
+  examples: ExampleStore;
   timezone: string;
   log: Logger;
 }) {
-  const { token, ownerId, db, boss, approvals, tasks, timezone, log } = deps;
+  const { token, ownerId, db, boss, approvals, tasks, examples, timezone, log } = deps;
   const taskLines = (list: Task[]) => list.map((t) => `${describeTask(t, timezone)}`).join("\n");
   const bot = new Bot(token);
 
@@ -83,6 +96,16 @@ export function createBot(deps: {
     await ctx.reply(task ? `✓ Done: ${task.title}` : `There is no task #${id}.`);
   });
 
+  bot.command("collect_emails", async (ctx) => {
+    const months = Number(ctx.match.trim()) || 24;
+    await boss.send(Jobs.outreachCollect, { months } satisfies OutreachCollectJob);
+    await ctx.reply("On it. This can take a few minutes.");
+  });
+
+  bot.command("review_emails", async () => {
+    await sendReviewBatch(examples, outbox);
+  });
+
   bot.command("demo_approval", async (ctx) => {
     await approvals.request({
       kind: "demo.note",
@@ -111,6 +134,15 @@ export function createBot(deps: {
     if (!task) return ctx.answerCallbackQuery({ text: "That task no longer exists." });
     await ctx.editMessageText(`⏰ ${task.title}\n\n${note}`).catch(() => undefined);
     await ctx.answerCallbackQuery({ text: note });
+  });
+
+  bot.on("callback_query:data", async (ctx, next) => {
+    const parsed = parseExampleCallback(ctx.callbackQuery.data);
+    if (!parsed) return next();
+    const example = await examples.review(parsed.id, parsed.button);
+    if (!example) return ctx.answerCallbackQuery({ text: "That email is no longer in the list." });
+    await ctx.editMessageText(exampleCardText(example, parsed.button, 300)).catch(() => undefined);
+    await ctx.answerCallbackQuery({ text: parsed.button === "skip" ? "Skipped" : "Kept" });
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -160,6 +192,13 @@ export function createBot(deps: {
       const res = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
       if (!res.ok) throw new Error(`download failed with HTTP ${res.status}`);
       return Buffer.from(await res.arrayBuffer());
+    },
+    async exampleCard(example) {
+      const keyboard = new InlineKeyboard()
+        .text("Keep", exampleCallback(example.id, "keep"))
+        .text("⭐ Gold", exampleCallback(example.id, "gold"))
+        .text("Skip", exampleCallback(example.id, "skip"));
+      await bot.api.sendMessage(ownerId, exampleCardText(example), { reply_markup: keyboard });
     },
     async typing(chatId) {
       await bot.api.sendChatAction(chatId, "typing").catch(() => undefined);

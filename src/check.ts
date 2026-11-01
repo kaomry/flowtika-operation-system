@@ -12,6 +12,7 @@ import { createPool } from "./db/pool.ts";
 import { logger as log } from "./logger.ts";
 import { createModelBackend } from "./models/index.ts";
 import { startQueue } from "./queue/boss.ts";
+import { ExampleStore } from "./outreach/examples.ts";
 import { Jobs } from "./queue/jobs.ts";
 import { TaskService } from "./tasks/service.ts";
 import { AGENT_FAILURE_PREFIX, registerWorkers } from "./worker.ts";
@@ -48,6 +49,9 @@ const done = new Promise<void>((resolve) => {
     runtime,
     approvals: new ApprovalService(db),
     tasks,
+    examples: new ExampleStore(db),
+    gmail: async () => null,
+    ownerEmails: [],
     outbox: {
       toOwner: async (text) => {
         replies.push(text);
@@ -56,6 +60,7 @@ const done = new Promise<void>((resolve) => {
       taskReminder: async () => undefined,
       downloadFile: async () => Buffer.alloc(0),
       typing: async () => undefined,
+      exampleCard: async () => undefined,
     },
     ownerChatId: CHECK_CHAT_ID,
     log,

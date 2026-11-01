@@ -1,4 +1,5 @@
 import type { Approval } from "../approvals/service.ts";
+import type { OutreachExample } from "../outreach/examples.ts";
 
 /** Telegram rejects messages over 4096 characters; split on paragraph or line breaks when possible. */
 export function splitForTelegram(text: string, limit = 4000): string[] {
@@ -49,4 +50,38 @@ export function parseApprovalCallback(data: string): { id: string; decision: "ap
   const match = /^ap:([0-9a-f-]{36}):([ar])$/.exec(data);
   if (!match) return null;
   return { id: match[1]!, decision: match[2] === "a" ? "approved" : "rejected" };
+}
+
+export type ExampleButton = "keep" | "gold" | "skip";
+const EXAMPLE_BUTTON_CODES: Record<ExampleButton, string> = { keep: "k", gold: "g", skip: "s" };
+
+export const exampleCallback = (id: number, button: ExampleButton) => `ox:${id}:${EXAMPLE_BUTTON_CODES[button]}`;
+
+export function parseExampleCallback(data: string): { id: number; button: ExampleButton } | null {
+  const match = /^ox:(\d+):([kgs])$/.exec(data);
+  if (!match) return null;
+  const button = (Object.keys(EXAMPLE_BUTTON_CODES) as ExampleButton[]).find((b) => EXAMPLE_BUTTON_CODES[b] === match[2])!;
+  return { id: Number(match[1]), button };
+}
+
+const exampleDecision: Record<ExampleButton, string> = {
+  keep: "✓ Kept as an example",
+  gold: "⭐ Kept as a gold example",
+  skip: "✗ Skipped, not cold outreach",
+};
+
+/** A past email shown for review: who it went to, whether they replied, and the start of the text. */
+export function exampleCardText(e: OutreachExample, decided?: ExampleButton, previewChars = 700): string {
+  const to = e.toName ? `${e.toName} <${e.toAddress}>` : e.toAddress;
+  const body = e.body.length > previewChars ? `${e.body.slice(0, previewChars).trimEnd()}…` : e.body;
+  const lines = [
+    `📧 Cold email? #${e.id}`,
+    `To: ${to}`,
+    `Sent: ${e.sentAt.toISOString().slice(0, 10)} · ${e.wordCount} words · ${e.replied ? "they replied" : "no reply"}`,
+    `Subject: ${e.subject || "(none)"}`,
+    "",
+    body,
+  ];
+  if (decided) lines.push("", exampleDecision[decided]);
+  return lines.join("\n");
 }
