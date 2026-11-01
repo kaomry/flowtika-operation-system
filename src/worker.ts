@@ -5,13 +5,19 @@ import type { ApprovalService } from "./approvals/service.ts";
 import type { Logger } from "./logger.ts";
 import type { GmailClient } from "./google/gmail.ts";
 import { collectColdEmails } from "./outreach/collect.ts";
+import type { Draft } from "./outreach/drafts.ts";
 import type { ExampleStore, OutreachExample } from "./outreach/examples.ts";
+import { OutreachError, type OutreachService } from "./outreach/service.ts";
 import {
   Jobs,
   type ApprovalExecuteJob,
   type InboundMessageJob,
   type InboundVoiceJob,
+  type OutreachBatchJob,
   type OutreachCollectJob,
+  type OutreachDraftJob,
+  type OutreachReviseJob,
+  type OutreachSaveJob,
 } from "./queue/jobs.ts";
 import type { Task, TaskService } from "./tasks/service.ts";
 import type { Transcriber } from "./voice/transcriber.ts";
@@ -26,6 +32,10 @@ export interface Outbox {
   downloadFile(fileId: string): Promise<Buffer>;
   /** Shows a past email with Keep / Gold / Skip buttons. */
   exampleCard(example: OutreachExample): Promise<void>;
+  /** Shows a drafted email with Save / Drop buttons and returns the Telegram message id. */
+  draftCard(draft: Draft): Promise<number>;
+  /** Rewrites a draft card once it's decided, without buttons. */
+  editDraftCard(draft: Draft, note: string): Promise<void>;
 }
 
 /** The connected Gmail account, looked up per job so connecting doesn't need a restart. */
@@ -71,12 +81,14 @@ export async function registerWorkers(deps: {
   transcriber?: Transcriber;
   examples: ExampleStore;
   gmail: GmailSource;
+  outreach: OutreachService;
   ownerEmails: string[];
   outbox: Outbox;
   ownerChatId: number;
   log: Logger;
 }): Promise<void> {
-  const { boss, runtime, approvals, tasks, transcriber, examples, gmail, ownerEmails, outbox, ownerChatId, log } = deps;
+  const { boss, runtime, approvals, tasks, transcriber, examples, gmail, outreach, ownerEmails, outbox, ownerChatId, log } =
+    deps;
 
   const answer = async (chatId: number, text: string) => {
     await outbox.typing(chatId);
@@ -94,9 +106,24 @@ export async function registerWorkers(deps: {
     await answer(job.data.chatId, job.data.text);
   });
 
+  /** Runs an outreach step and tells the owner in plain words if it fails. */
+  const outreachStep = async (what: string, step: () => Promise<void>) => {
+    try {
+      await step();
+    } catch (err) {
+      if (!(err instanceof OutreachError)) log.error({ err }, `outreach: ${what} failed`);
+      await outbox.toOwner(err instanceof OutreachError ? err.message : `I couldn't ${what}: ${(err as Error).message}`);
+    }
+  };
+
+  const showDraft = async (draft: Draft) => {
+    const messageId = await outbox.draftCard(draft);
+    await outreach.drafts.setTelegramMessage(draft.id, messageId);
+  };
+
   await boss.work<InboundVoiceJob>(Jobs.inboundVoice, async ([job]) => {
     if (!job) return;
-    const { chatId, fileId } = job.data;
+    const { chatId, fileId, replyToMessageId } = job.data;
     if (!transcriber) {
       await outbox.toOwner("Voice notes aren't set up on this machine yet, so please type for now.");
       return;
@@ -116,6 +143,12 @@ export async function registerWorkers(deps: {
     }
     // Show what was heard, so a mistranscription is caught before anything acts on it.
     await outbox.toOwner(`🎙 ${transcript}`);
+    const draft = replyToMessageId ? await outreach.drafts.byTelegramMessage(replyToMessageId) : null;
+    if (draft) {
+      await boss.send(Jobs.outreachRevise, { draftId: draft.id, feedback: transcript } satisfies OutreachReviseJob);
+      await outbox.toOwner(`Rewriting the draft for ${draft.leadName}…`);
+      return;
+    }
     await answer(chatId, `[Voice note] ${transcript}`);
   });
 
@@ -153,6 +186,82 @@ export async function registerWorkers(deps: {
     } catch (err) {
       log.error({ err }, "cold email collection failed");
       await outbox.toOwner(`I couldn't finish reading your sent mail: ${(err as Error).message}`);
+    }
+  });
+
+  await boss.work<OutreachDraftJob>(Jobs.outreachDraft, async ([job]) => {
+    if (!job) return;
+    await outreachStep("write that draft", async () => {
+      let lead;
+      if (job.data.leadPageId) {
+        lead = await outreach.getLead(job.data.leadPageId);
+      } else {
+        const query = job.data.query ?? "";
+        const found = await outreach.findLeads(query);
+        if (!found.length) {
+          await outbox.toOwner(`I couldn't find a lead called "${query}" in Notion.`);
+          return;
+        }
+        if (found.length > 1) {
+          const names = found.slice(0, 10).map((l) => `• ${l.name}${l.status ? ` (${l.status})` : ""}`);
+          await outbox.toOwner(`More than one lead matches "${query}". Which one?\n${names.join("\n")}`);
+          return;
+        }
+        lead = found[0]!;
+      }
+      await outbox.typing(ownerChatId);
+      await showDraft(await outreach.draftFor(lead));
+    });
+  });
+
+  await boss.work<OutreachBatchJob>(Jobs.outreachBatch, async ([job]) => {
+    if (!job) return;
+    await outreachStep("start the batch", async () => {
+      const { leads, noEmail } = await outreach.batchCandidates(job.data.limit);
+      if (!leads.length) {
+        await outbox.toOwner(
+          `No leads at "פוטנציאל" are waiting for a first email.${noEmail.length ? ` ${noEmail.length} have no email address in Notion.` : ""}`,
+        );
+        return;
+      }
+      for (const lead of leads) await boss.send(Jobs.outreachDraft, { leadPageId: lead.pageId } satisfies OutreachDraftJob);
+      const lines = [`Writing ${leads.length} drafts, one at a time: ${leads.map((l) => l.name).join(", ")}.`];
+      if (noEmail.length) lines.push(`Skipped for having no email in Notion: ${noEmail.map((l) => l.name).join(", ")}.`);
+      await outbox.toOwner(lines.join("\n"));
+    });
+  });
+
+  await boss.work<OutreachReviseJob>(Jobs.outreachRevise, async ([job]) => {
+    if (!job) return;
+    await outreachStep("rewrite that draft", async () => {
+      await outbox.typing(ownerChatId);
+      await showDraft(await outreach.revise(job.data.draftId, job.data.feedback));
+    });
+  });
+
+  await boss.work<OutreachSaveJob>(Jobs.outreachSave, async ([job]) => {
+    if (!job) return;
+    await outreachStep("save that draft", async () => {
+      const result = await outreach.save(job.data.draftId);
+      if (!result) return;
+      const note = result.notionProblem
+        ? `✓ Saved in Gmail Drafts. Notion wasn't updated: ${result.notionProblem}`
+        : "✓ Saved in Gmail Drafts and added to the lead's Notion page. Nothing is sent until you press Send in Gmail.";
+      await outbox.editDraftCard(result.draft, note);
+    });
+  });
+
+  await boss.work(Jobs.outreachStatusSync, async () => {
+    try {
+      const result = await outreach.syncStatuses();
+      if (result.changed.length) {
+        log.info(result, "lead statuses synced");
+        await outbox.toOwner(
+          `Updated in Notion:\n${result.changed.map((c) => `• ${c.lead}: ${c.from ?? "(none)"} → ${c.to}`).join("\n")}`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, "lead status sync failed");
     }
   });
 

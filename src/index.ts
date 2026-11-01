@@ -7,7 +7,10 @@ import { logger as log } from "./logger.ts";
 import { GmailClient } from "./google/gmail.ts";
 import { AccessTokenSource, loadAccount } from "./google/oauth.ts";
 import { createModelBackend } from "./models/index.ts";
+import { NotionClient } from "./notion/client.ts";
+import { DraftStore } from "./outreach/drafts.ts";
 import { ExampleStore } from "./outreach/examples.ts";
+import { OutreachService } from "./outreach/service.ts";
 import { startQueue } from "./queue/boss.ts";
 import { applySchedules, defaultSchedules } from "./scheduler/schedules.ts";
 import { createBot } from "./telegram/bot.ts";
@@ -48,6 +51,21 @@ const gmail: GmailSource = async () => {
   return { gmail: client, account: account.email };
 };
 
+const drafts = new DraftStore(db);
+const outreach = new OutreachService({
+  db,
+  drafts,
+  examples,
+  notion: config.NOTION_TOKEN ? new NotionClient(config.NOTION_TOKEN) : null,
+  leadsDataSource: config.NOTION_LEADS_DATA_SOURCE,
+  gmail,
+  backend,
+  styleGuidePath: config.OUTREACH_STYLE_GUIDE,
+  signature: config.OUTREACH_SIGNATURE,
+  log,
+});
+if (!config.NOTION_TOKEN) log.warn("NOTION_TOKEN is not set, so drafting from Notion leads is off");
+
 const { bot, outbox, presenter } = createBot({
   token: config.TELEGRAM_BOT_TOKEN,
   ownerId: config.TELEGRAM_OWNER_ID,
@@ -56,6 +74,7 @@ const { bot, outbox, presenter } = createBot({
   approvals,
   tasks,
   examples,
+  drafts,
   timezone: config.TIMEZONE,
   log,
 });
@@ -85,12 +104,13 @@ await registerWorkers({
   transcriber,
   examples,
   gmail,
+  outreach,
   ownerEmails: config.OWNER_EMAILS,
   outbox,
   ownerChatId: config.TELEGRAM_OWNER_ID,
   log,
 });
-await applySchedules(boss, defaultSchedules(config.DAILY_BRIEF_CRON), config.TIMEZONE, log);
+await applySchedules(boss, defaultSchedules(config.DAILY_BRIEF_CRON, config.OUTREACH_STATUS_SYNC_CRON), config.TIMEZONE, log);
 
 const shutdown = async (signal: string) => {
   log.info({ signal }, "shutting down");

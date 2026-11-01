@@ -9,6 +9,11 @@ export const Jobs = {
   dailyBrief: "schedule-daily-brief",
   taskReminders: "schedule-task-reminders",
   outreachCollect: "outreach-collect",
+  outreachDraft: "outreach-draft",
+  outreachBatch: "outreach-batch",
+  outreachRevise: "outreach-revise",
+  outreachSave: "outreach-save",
+  outreachStatusSync: "schedule-outreach-status-sync",
 } as const;
 
 export type JobName = (typeof Jobs)[keyof typeof Jobs];
@@ -21,6 +26,8 @@ export interface InboundMessageJob {
 export interface InboundVoiceJob {
   chatId: number;
   fileId: string;
+  /** Set when the voice note replies to one of the bot's messages, such as a draft card. */
+  replyToMessageId?: number;
 }
 
 export interface ApprovalExecuteJob {
@@ -30,4 +37,23 @@ export interface ApprovalExecuteJob {
 export interface OutreachCollectJob {
   /** How far back to look in sent mail, in months. */
   months: number;
+}
+
+/** Draft a cold email for one lead: by Notion page id, or by a name to look up. */
+export interface OutreachDraftJob {
+  leadPageId?: string;
+  query?: string;
+}
+
+export interface OutreachBatchJob {
+  limit: number;
+}
+
+export interface OutreachReviseJob {
+  draftId: number;
+  feedback: string;
+}
+
+export interface OutreachSaveJob {
+  draftId: number;
 }

@@ -26,8 +26,10 @@ export async function applySchedules(
   }
 }
 
-export const defaultSchedules = (dailyBriefCron: string | undefined): ScheduleSpec[] => [
+export const defaultSchedules = (dailyBriefCron: string | undefined, statusSyncCron?: string): ScheduleSpec[] => [
   { job: Jobs.dailyBrief, cron: dailyBriefCron },
+  // Moves Notion lead statuses forward from what Gmail shows was sent and answered.
+  { job: Jobs.outreachStatusSync, cron: statusSyncCron },
   // Every minute is cheap (one indexed query) and keeps reminders on time.
   { job: Jobs.taskReminders, cron: "* * * * *" },
 ];

@@ -61,6 +61,8 @@ You need [Node.js 22+](https://nodejs.org), [Docker Desktop](https://www.docker.
 | `/done 3` | Marks task #3 done |
 | `/collect_emails` | Finds your past cold emails in Gmail |
 | `/review_emails` | Keep or skip the cold emails found |
+| `/draft Dana` | Writes a cold email to the Notion lead "Dana" |
+| `/draft_batch 5` | Writes drafts for up to 5 leads at "פוטנציאל" that don't have one yet |
 | `/pending` | Approvals waiting for you |
 | `/reset` | Forgets the conversation |
 | `/demo_approval` | Sends an approval card so you can try Approve and Reject |
@@ -97,6 +99,19 @@ Then in Telegram:
 - `/collect_emails` looks through the last 24 months of sent mail (`/collect_emails 6` for 6 months) for first emails to people you had never emailed before, and notes whether they replied.
 - `/review_emails` shows them five at a time. Tap **Keep**, **⭐ Gold** for your best ones, or **Skip** for anything that isn't cold outreach.
 
+## Writing cold emails from Notion leads
+
+The Outreach Writer drafts first emails to leads in the Notion Leads database, in your style, and gets better from your comments.
+
+Setup: create an internal integration at [notion.so/profile/integrations](https://www.notion.so/profile/integrations) with **Read content**, **Update content** and **Insert content**, share the Leads page with it (••• → Connections), and put its token in `.env` as `NOTION_TOKEN`. `NOTION_LEADS_DATA_SOURCE` is the Leads data source id. `OUTREACH_STYLE_GUIDE` points at the style guide file and `OUTREACH_SIGNATURE` is the signature added to every email (use `\n` between lines).
+
+How it works:
+
+- `/draft <name>` or `/draft_batch [n]` writes drafts. Each one uses the style guide, your kept example emails, the lead's Notion page and the start of their website. You get a card with the email and a one-line note on the angle it took.
+- **Reply to the card** with a comment, typed or as a voice note ("shorter", "open with their new campus"), and you get a rewritten version. On a rewritten version, **Keep my comment as a rule** makes every future draft follow it.
+- **Save to Gmail** puts the email in Gmail Drafts addressed to the lead and adds it to the lead's Notion page under "מייל/פנייה". Nothing is sent: you read it and press Send in Gmail yourself. **Drop** discards it.
+- Every 30 minutes (`OUTREACH_STATUS_SYNC_CRON`) lead statuses move forward from what's in Gmail: an email you sent them moves "פוטנציאל" to "נשלחה פנייה ראשונה", and a reply from them moves it to "התכתבות ראשונית". Later statuses, and ones like "לא רלוונטי", are never changed. Each change is written to `audit_log` and reported in Telegram.
+
 ## Model backend
 
 `MODEL_BACKEND=claude-code` (the default) runs the official Claude Code CLI in print mode, signed in with your own Claude subscription, for your own use. Its built-in tools and MCP servers are turned off; agents get capabilities only from this platform. Subscription usage limits assume ordinary individual use, so when the agents run on heavy schedules or around the clock, switch to `MODEL_BACKEND=api` with an `ANTHROPIC_API_KEY` and a monthly spending limit set in the [Claude Console](https://platform.claude.com/). Nothing else changes.
@@ -118,7 +133,7 @@ approvals.register("email.send", async (payload) => {
 
 ## Schedules
 
-`DAILY_BRIEF_CRON` (default `0 8 * * *`, in `TIMEZONE`) sends a morning check-in. Leave it empty to turn it off. Schedules are applied on every start.
+`DAILY_BRIEF_CRON` (default `0 8 * * *`, in `TIMEZONE`) sends a morning check-in. `OUTREACH_STATUS_SYNC_CRON` (default every 30 minutes) syncs lead statuses. Leave either empty to turn it off. Schedules are applied on every start.
 
 ## Development
 

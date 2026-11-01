@@ -5,13 +5,18 @@ import { audit } from "../db/audit.ts";
 import { clearMessages } from "../db/messages.ts";
 import type { Db } from "../db/pool.ts";
 import type { Logger } from "../logger.ts";
+import type { DraftStore } from "../outreach/drafts.ts";
 import type { ExampleStore } from "../outreach/examples.ts";
 import {
   Jobs,
   type ApprovalExecuteJob,
   type InboundMessageJob,
   type InboundVoiceJob,
+  type OutreachBatchJob,
   type OutreachCollectJob,
+  type OutreachDraftJob,
+  type OutreachReviseJob,
+  type OutreachSaveJob,
 } from "../queue/jobs.ts";
 import { describeTask } from "../agents/taskActions.ts";
 import type { Task, TaskService } from "../tasks/service.ts";
@@ -20,9 +25,12 @@ import { sendReviewBatch, type Outbox } from "../worker.ts";
 import {
   approvalCallback,
   approvalCardText,
+  draftCallback,
+  draftCardText,
   exampleCallback,
   exampleCardText,
   parseApprovalCallback,
+  parseDraftCallback,
   parseExampleCallback,
   parseTaskCallback,
   splitForTelegram,
@@ -38,6 +46,8 @@ Write or send a voice note, in Hebrew or English. I remember our conversation an
 /done 3  mark task #3 done
 /collect_emails  find your past cold emails in Gmail
 /review_emails  keep or skip the ones found
+/draft Dana  write a cold email to a Notion lead
+/draft_batch 5  draft for leads at "פוטנציאל"
 /pending  approvals waiting for you
 /reset  forget this conversation
 /demo_approval  try the approval buttons
@@ -51,10 +61,11 @@ export function createBot(deps: {
   approvals: ApprovalService;
   tasks: TaskService;
   examples: ExampleStore;
+  drafts: DraftStore;
   timezone: string;
   log: Logger;
 }) {
-  const { token, ownerId, db, boss, approvals, tasks, examples, timezone, log } = deps;
+  const { token, ownerId, db, boss, approvals, tasks, examples, drafts, timezone, log } = deps;
   const taskLines = (list: Task[]) => list.map((t) => `${describeTask(t, timezone)}`).join("\n");
   const bot = new Bot(token);
 
@@ -106,6 +117,19 @@ export function createBot(deps: {
     await sendReviewBatch(examples, outbox);
   });
 
+  bot.command("draft", async (ctx) => {
+    const query = ctx.match.trim();
+    if (!query) return ctx.reply("Which lead? For example: /draft Dana Levi");
+    await boss.send(Jobs.outreachDraft, { query } satisfies OutreachDraftJob);
+    await ctx.reply(`Writing a draft for ${query}. This takes a minute or two.`);
+  });
+
+  bot.command("draft_batch", async (ctx) => {
+    const limit = Math.min(Number(ctx.match.trim()) || 12, 25);
+    await boss.send(Jobs.outreachBatch, { limit } satisfies OutreachBatchJob);
+    await ctx.reply("Looking for leads to write to…");
+  });
+
   bot.command("demo_approval", async (ctx) => {
     await approvals.request({
       kind: "demo.note",
@@ -145,6 +169,28 @@ export function createBot(deps: {
     await ctx.answerCallbackQuery({ text: parsed.button === "skip" ? "Skipped" : "Kept" });
   });
 
+  bot.on("callback_query:data", async (ctx, next) => {
+    const parsed = parseDraftCallback(ctx.callbackQuery.data);
+    if (!parsed) return next();
+    const draft = await drafts.get(parsed.id);
+    if (!draft) return ctx.answerCallbackQuery({ text: "That draft no longer exists." });
+    if (parsed.button === "rule") {
+      if (!draft.feedback) return ctx.answerCallbackQuery({ text: "This draft has no comment to keep." });
+      await drafts.addRule(draft.feedback, draft.id);
+      return ctx.answerCallbackQuery({ text: "Kept. Every future draft will follow it." });
+    }
+    if (draft.status !== "pending") {
+      return ctx.answerCallbackQuery({ text: `This draft was already ${draft.status === "superseded" ? "replaced by a newer version" : draft.status}.` });
+    }
+    if (parsed.button === "save") {
+      await boss.send(Jobs.outreachSave, { draftId: draft.id } satisfies OutreachSaveJob);
+      return ctx.answerCallbackQuery({ text: "Saving to Gmail Drafts…" });
+    }
+    const dropped = await drafts.decide(draft.id, "dropped");
+    if (dropped) await ctx.editMessageText(draftCardText(dropped, "✗ Dropped")).catch(() => undefined);
+    await ctx.answerCallbackQuery({ text: "Dropped" });
+  });
+
   bot.on("callback_query:data", async (ctx) => {
     const parsed = parseApprovalCallback(ctx.callbackQuery.data);
     if (!parsed) return ctx.answerCallbackQuery();
@@ -157,6 +203,14 @@ export function createBot(deps: {
   });
 
   bot.on("message:text", async (ctx) => {
+    // A reply to a draft card is a comment on that draft.
+    const replyTo = ctx.message.reply_to_message?.message_id;
+    const draft = replyTo ? await drafts.byTelegramMessage(replyTo) : null;
+    if (draft) {
+      await boss.send(Jobs.outreachRevise, { draftId: draft.id, feedback: ctx.message.text } satisfies OutreachReviseJob);
+      await ctx.reply(`Rewriting the draft for ${draft.leadName}…`);
+      return;
+    }
     await boss.send(Jobs.inboundMessage, { chatId: ctx.chat.id, text: ctx.message.text } satisfies InboundMessageJob);
   });
 
@@ -167,7 +221,11 @@ export function createBot(deps: {
     if ((file.file_size ?? 0) > 20 * 1024 * 1024) {
       return ctx.reply("That recording is over Telegram's 20 MB limit for bots. Please send a shorter one.");
     }
-    await boss.send(Jobs.inboundVoice, { chatId: ctx.chat.id, fileId: file.file_id } satisfies InboundVoiceJob);
+    await boss.send(Jobs.inboundVoice, {
+      chatId: ctx.chat.id,
+      fileId: file.file_id,
+      replyToMessageId: ctx.message.reply_to_message?.message_id,
+    } satisfies InboundVoiceJob);
   });
 
   bot.catch((err) => log.error({ err: err.error }, "telegram handler failed"));
@@ -199,6 +257,23 @@ export function createBot(deps: {
         .text("⭐ Gold", exampleCallback(example.id, "gold"))
         .text("Skip", exampleCallback(example.id, "skip"));
       await bot.api.sendMessage(ownerId, exampleCardText(example), { reply_markup: keyboard });
+    },
+    async draftCard(draft) {
+      const keyboard = new InlineKeyboard()
+        .text("Save to Gmail", draftCallback(draft.id, "save"))
+        .text("Drop", draftCallback(draft.id, "drop"));
+      if (draft.feedback) keyboard.row().text("Keep my comment as a rule", draftCallback(draft.id, "rule"));
+      const msg = await bot.api.sendMessage(ownerId, draftCardText(draft), { reply_markup: keyboard });
+      return msg.message_id;
+    },
+    async editDraftCard(draft, note) {
+      if (draft.telegramMessageId === null) return outbox.toOwner(`${draft.leadName}: ${note}`);
+      const keyboard = draft.feedback
+        ? new InlineKeyboard().text("Keep my comment as a rule", draftCallback(draft.id, "rule"))
+        : undefined;
+      await bot.api
+        .editMessageText(ownerId, draft.telegramMessageId, draftCardText(draft, note), { reply_markup: keyboard })
+        .catch((err) => log.warn({ err }, "could not update draft card"));
     },
     async typing(chatId) {
       await bot.api.sendChatAction(chatId, "typing").catch(() => undefined);

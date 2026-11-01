@@ -12,7 +12,9 @@ import { createPool } from "./db/pool.ts";
 import { logger as log } from "./logger.ts";
 import { createModelBackend } from "./models/index.ts";
 import { startQueue } from "./queue/boss.ts";
+import { DraftStore } from "./outreach/drafts.ts";
 import { ExampleStore } from "./outreach/examples.ts";
+import { OutreachService } from "./outreach/service.ts";
 import { Jobs } from "./queue/jobs.ts";
 import { TaskService } from "./tasks/service.ts";
 import { AGENT_FAILURE_PREFIX, registerWorkers } from "./worker.ts";
@@ -41,7 +43,9 @@ const boss = await startQueue(url, log);
 console.log("✓ queue started");
 
 const tasks = new TaskService(db, env.TIMEZONE ?? "UTC");
-const runtime = new AgentRuntime(db, createModelBackend(config), tasks, { memoryMessages: 10, timezone: env.TIMEZONE ?? "UTC" });
+const backend = createModelBackend(config);
+const examples = new ExampleStore(db);
+const runtime = new AgentRuntime(db, backend, tasks, { memoryMessages: 10, timezone: env.TIMEZONE ?? "UTC" });
 const replies: string[] = [];
 const done = new Promise<void>((resolve) => {
   void registerWorkers({
@@ -49,8 +53,20 @@ const done = new Promise<void>((resolve) => {
     runtime,
     approvals: new ApprovalService(db),
     tasks,
-    examples: new ExampleStore(db),
+    examples,
     gmail: async () => null,
+    outreach: new OutreachService({
+      db,
+      drafts: new DraftStore(db),
+      examples,
+      notion: null,
+      leadsDataSource: "",
+      gmail: async () => null,
+      backend,
+      styleGuidePath: "",
+      signature: "",
+      log,
+    }),
     ownerEmails: [],
     outbox: {
       toOwner: async (text) => {
@@ -61,6 +77,8 @@ const done = new Promise<void>((resolve) => {
       downloadFile: async () => Buffer.alloc(0),
       typing: async () => undefined,
       exampleCard: async () => undefined,
+      draftCard: async () => 0,
+      editDraftCard: async () => undefined,
     },
     ownerChatId: CHECK_CHAT_ID,
     log,
