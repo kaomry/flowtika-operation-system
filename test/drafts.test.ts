@@ -102,7 +102,7 @@ describe.skipIf(!url)("outreach drafts", () => {
       gmail: async () => ({ gmail, account: "me@flowtika.com" }),
       backend,
       styleGuidePath: "/nonexistent",
-      signature: "Omry Kaufman\n055-4222014",
+      signature: "Omry Kaufman\n052-4222014",
       log: logger,
     });
     return { service, gmailDrafts, appended, statuses, updated };
@@ -145,7 +145,7 @@ describe.skipIf(!url)("outreach drafts", () => {
       leadName: lead1.name,
       toAddress: lead1.email,
       subject: "נושא",
-      body: "היי *דנה*,\nעמרי\nOmry Kaufman\n055-4222014",
+      body: "היי *דנה*,\nעמרי\nOmry Kaufman\n052-4222014",
       angle: "a",
     });
     await service.save(draft.id);
